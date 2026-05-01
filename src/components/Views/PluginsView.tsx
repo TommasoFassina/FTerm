@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { useStore } from '@/store'
 import { motion, AnimatePresence } from 'motion/react'
 import { Search, Plus, Settings, Edit3, Trash2, X, Save } from 'lucide-react'
-import { pluginManager, evalPluginCode as evalPlugin } from '@/plugins'
+import { pluginManager, evalPluginCode as evalPlugin, autoThemePlugin, AUTO_THEME_DEFAULTS } from '@/plugins'
 
 export default function PluginsView() {
-    const { plugins, togglePlugin, addCustomPlugin, updateCustomPlugin, deleteCustomPlugin } = useStore()
+    const { plugins, togglePlugin, addCustomPlugin, updateCustomPlugin, deleteCustomPlugin, settings, setSettings } = useStore()
     const [search, setSearch] = useState('')
     const [editingPlugin, setEditingPlugin] = useState<any>(null)
     const [isCreating, setIsCreating] = useState(false)
@@ -30,35 +30,39 @@ export default function PluginsView() {
         setIsCreating(false)
     }
 
-    const handleSave = () => {
+    const handleSave = async () => {
+        let pluginObj: any
         try {
-            // Validate code compiles using sandboxed eval
-            evalPlugin(editForm.code)
+            pluginObj = await evalPlugin(editForm.code)
+        } catch (err: any) {
+            console.error('Plugin eval failed:', err)
+            alert(`Plugin code error:\n\n${err.name}: ${err.message}\n\nTip: paste only the object literal, e.g. { onPtyData: (d) => {...} }`)
+            return
+        }
 
+        try {
             if (isCreating) {
-                addCustomPlugin({ ...editForm, enabled: true })
+                const id = addCustomPlugin({ ...editForm, enabled: true })
+                pluginObj.id = id
+                pluginObj.name = editForm.name
+                pluginObj.description = editForm.description
+                pluginObj.version = pluginObj.version ?? '1.0.0'
+                pluginManager.register(pluginObj)
             } else if (editingPlugin) {
                 pluginManager.unregister(editingPlugin.id)
                 updateCustomPlugin(editingPlugin.id, editForm)
-
-                // Hot reload
-                try {
-                    const pluginObj = evalPlugin(editForm.code)
-                    pluginObj.id = editingPlugin.id
-                    pluginObj.name = editForm.name
-                    pluginObj.description = editForm.description
-                    pluginObj.version = pluginObj.version ?? '1.0.0'
-                    if (editingPlugin.enabled) {
-                        pluginManager.register(pluginObj)
-                    }
-                } catch (e: any) {
-                    console.warn('Plugin hot reload failed:', e)
-                    alert(`Plugin saved but hot reload failed:\n${e.message}`)
+                pluginObj.id = editingPlugin.id
+                pluginObj.name = editForm.name
+                pluginObj.description = editForm.description
+                pluginObj.version = pluginObj.version ?? '1.0.0'
+                if (editingPlugin.enabled) {
+                    pluginManager.register(pluginObj)
                 }
             }
             closeEditor()
         } catch (err: any) {
-            alert(`Syntax Error in plugin logic:\n${err.message}`)
+            console.error('Plugin register failed:', err)
+            alert(`Plugin saved but failed to load:\n\n${err.name}: ${err.message}`)
         }
     }
 
@@ -116,18 +120,20 @@ export default function PluginsView() {
                             <button
                                 onClick={() => {
                                     togglePlugin(plugin.id)
-                                    if (plugin.isCustom && plugin.code) {
+                                    if (plugin.id === 'auto-theme') {
+                                        if (plugin.enabled) pluginManager.unregister('auto-theme')
+                                        else pluginManager.register(autoThemePlugin)
+                                    } else if (plugin.isCustom && plugin.code) {
                                         if (plugin.enabled) pluginManager.unregister(plugin.id)
                                         else {
-                                            try {
-                                                const p = evalPlugin(plugin.code)
+                                            evalPlugin(plugin.code).then(p => {
                                                 p.id = plugin.id
                                                 p.name = plugin.name
                                                 p.description = plugin.description
                                                 pluginManager.register(p)
-                                            } catch (e: any) {
+                                            }).catch((e: any) => {
                                                 alert(`Failed to enable plugin:\n${e.message}`)
-                                            }
+                                            })
                                         }
                                     }
                                 }}
@@ -216,6 +222,12 @@ export default function PluginsView() {
                                             />
                                         </div>
                                     </>
+                                ) : editingPlugin?.id === 'auto-theme' ? (
+                                    <AutoThemeConfig
+                                        config={settings.autoThemeConfig ?? AUTO_THEME_DEFAULTS}
+                                        themes={useStore.getState().themes}
+                                        onChange={cfg => setSettings({ autoThemeConfig: cfg })}
+                                    />
                                 ) : (
                                     <div className="flex flex-col items-center justify-center flex-1 text-white/50 h-full py-10">
                                         <Settings size={48} className="mb-4 opacity-50" />
@@ -252,5 +264,47 @@ export default function PluginsView() {
                 )}
             </AnimatePresence>
         </motion.div>
+    )
+}
+
+// ─── Auto Theme Config ────────────────────────────────────────────────────────
+
+const SLOT_LABELS: Record<string, { label: string; hours: string }> = {
+    morning:   { label: 'Morning',   hours: '06:00 – 12:00' },
+    afternoon: { label: 'Afternoon', hours: '12:00 – 18:00' },
+    evening:   { label: 'Evening',   hours: '18:00 – 22:00' },
+    night:     { label: 'Night',     hours: '22:00 – 06:00' },
+}
+
+function AutoThemeConfig({
+    config,
+    themes,
+    onChange,
+}: {
+    config: { morning: string; afternoon: string; evening: string; night: string }
+    themes: { id: string; name: string }[]
+    onChange: (cfg: typeof config) => void
+}) {
+    return (
+        <div className="flex flex-col gap-5 p-1">
+            <p className="text-sm text-white/50">Theme switches automatically based on local time. Changes take effect within 30 minutes or on next app launch.</p>
+            {(Object.keys(SLOT_LABELS) as Array<keyof typeof config>).map(slot => (
+                <div key={slot} className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                        <div className="text-sm font-medium text-white">{SLOT_LABELS[slot].label}</div>
+                        <div className="text-xs text-white/40 font-mono">{SLOT_LABELS[slot].hours}</div>
+                    </div>
+                    <select
+                        value={config[slot]}
+                        onChange={e => onChange({ ...config, [slot]: e.target.value })}
+                        className="bg-black/60 border border-white/10 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500/50 min-w-[160px]"
+                    >
+                        {themes.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                    </select>
+                </div>
+            ))}
+        </div>
     )
 }

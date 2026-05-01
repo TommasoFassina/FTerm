@@ -37,7 +37,6 @@ function deployFtermFetch(): string {
       '@echo off',
       `doskey ftermfetch=powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${dest}"`,
       `prompt ${cmdPromptStr}`,
-      'cls',
     ].join('\r\n') + '\r\n'
     writeFileSync(join(dir, 'fterm_init.bat'), initBat, 'ascii')
     ftermfetchScriptPath = dest

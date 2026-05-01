@@ -267,7 +267,11 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
         if (aborted) return
         try {
           const { pin } = JSON.parse(body)
-          if (typeof pin === 'string' && pin === currentPin) {
+          const pinValid = typeof pin === 'string'
+            && pin.length === currentPin.length
+            && currentPin.length > 0
+            && crypto.timingSafeEqual(Buffer.from(pin), Buffer.from(currentPin))
+          if (pinValid) {
             recordSuccess(ip)
             const token = generateToken()
             tokens.set(token, true)
@@ -301,6 +305,27 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
       socket.destroy()
       return
+    }
+    // Single-use token: invalidate immediately to prevent replay/sharing
+    tokens.delete(token)
+
+    // Validate Origin header — only allow same-host origins (prevents cross-origin WS hijack
+    // from another page on the LAN that already learned the PIN somehow)
+    const origin = req.headers.origin
+    if (origin) {
+      try {
+        const o = new URL(origin)
+        const host = req.headers.host ?? ''
+        if (o.host !== host) {
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+          socket.destroy()
+          return
+        }
+      } catch {
+        socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+        socket.destroy()
+        return
+      }
     }
 
     if (sessions.size >= 3) {

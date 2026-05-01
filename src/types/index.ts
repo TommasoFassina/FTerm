@@ -159,6 +159,12 @@ export interface AppSettings {
     navSidebarPosition: 'left' | 'right' | 'hidden'
     aiSidebarPosition: 'left' | 'right' | 'hidden'
   }
+  autoThemeConfig?: {
+    morning: string   // 06:00–12:00
+    afternoon: string // 12:00–18:00
+    evening: string   // 18:00–22:00
+    night: string     // 22:00–06:00
+  }
 }
 
 export interface GitStatus {

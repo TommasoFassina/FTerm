@@ -167,7 +167,7 @@ async function streamOpenAI(sender: Sender, req: AIRequest, signal?: AbortSignal
 
   if (!signal?.aborted) {
     sender.send('ai:usage', req.requestId, {
-      provider: 'openai', model: resolvedModel, inputTokens, outputTokens,
+      provider, model: resolvedModel, inputTokens, outputTokens,
     } satisfies UsageData)
   }
 }
@@ -408,7 +408,9 @@ export function registerAIHandlers(): void {
       provider === 'claude' ? 'claude-haiku-4-5-20251001' :
         provider === 'openai' ? 'gpt-4o-mini' :
           provider === 'copilot' ? 'gpt-4o-mini' :
-            undefined
+            provider === 'gemini' ? 'gemini-2.0-flash' :
+              provider === 'deepseek' ? 'deepseek-chat' :
+                undefined
 
     const testReq: AIRequest = {
       requestId: 'test',

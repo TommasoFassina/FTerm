@@ -108,6 +108,25 @@ function createWindow(): void {
     }
   })
 
+  // Block navigation away from app origin — prevents redirect-based exfiltration if renderer is XSS'd
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    try {
+      const parsed = new URL(url)
+      const devOk = isDev && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+      const fileOk = parsed.protocol === 'file:'
+      if (!devOk && !fileOk) e.preventDefault()
+    } catch { e.preventDefault() }
+  })
+
+  // Open all window.open() / target=_blank externally via shell — never spawn another BrowserWindow
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') shell.openExternal(url)
+    } catch { /* ignore */ }
+    return { action: 'deny' }
+  })
+
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
   } else {
@@ -132,6 +151,46 @@ function createWindow(): void {
   mainWindow.on('enter-full-screen', sendState)
   mainWindow.on('leave-full-screen', sendState)
 
+  // Easter egg: detect window shake / stillness and notify renderer (pet reacts)
+  let lastPos: { x: number; y: number; ts: number } | null = null
+  let lastDir: { dx: number; dy: number } | null = null
+  let reversals: number[] = []
+  let shakeActive = false
+  let stillTimer: ReturnType<typeof setTimeout> | null = null
+  const armStill = () => {
+    if (stillTimer) clearTimeout(stillTimer)
+    stillTimer = setTimeout(() => {
+      if (shakeActive) {
+        shakeActive = false
+        mainWindow?.webContents.send('pet:still')
+      }
+    }, 500)
+  }
+  mainWindow.on('move', () => {
+    if (!mainWindow) return
+    const [x, y] = mainWindow.getPosition()
+    const now = Date.now()
+    if (lastPos) {
+      const dx = x - lastPos.x
+      const dy = y - lastPos.y
+      const dist = Math.hypot(dx, dy)
+      if (dist >= 8 && lastDir) {
+        const dot = dx * lastDir.dx + dy * lastDir.dy
+        if (dot < 0) {
+          reversals.push(now)
+          reversals = reversals.filter(t => now - t < 800)
+          if (reversals.length >= 4) {
+            reversals = []
+            shakeActive = true
+            mainWindow.webContents.send('pet:shake')
+          }
+        }
+      }
+      if (dist >= 4) lastDir = { dx, dy }
+    }
+    lastPos = { x, y, ts: now }
+    if (shakeActive) armStill()
+  })
 }
 
 // ─── PTY IPC ─────────────────────────────────────────────────────────────────
@@ -610,9 +669,19 @@ ipcMain.handle('fs:writeFile', (_e, filePath: string, content: string) => {
 // ─── Temp file write IPC ─────────────────────────────────────────────────────
 
 ipcMain.handle('fs:writeTmp', (_e, filename: string, content: string) => {
-  // Sanitize filename to prevent path traversal
-  const safe = filename.replace(/[/\\]/g, '_').replace(/\.\./g, '_')
-  const filePath = join(tmpdir(), safe)
+  const path = require('path')
+  if (typeof filename !== 'string' || filename.length === 0 || filename.length > 200) {
+    throw new Error('Invalid filename')
+  }
+  // Strip any path components — only the basename allowed. Then sanitize remaining chars.
+  const base = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_')
+  if (!base || base === '.' || base === '..') throw new Error('Invalid filename')
+  const tmp = path.resolve(tmpdir())
+  const filePath = path.resolve(tmp, base)
+  // Ensure final path stays inside tmpdir
+  if (!filePath.startsWith(tmp + path.sep) && filePath !== tmp) {
+    throw new Error('Path escape detected')
+  }
   writeFileSync(filePath, content, 'utf8')
   return filePath
 })
@@ -718,16 +787,24 @@ ipcMain.handle('remote:status', () => {
 app.whenReady().then(() => {
   protocol.handle('fterm', (request) => {
     // URL format: fterm://local/<absolute-path>  e.g. fterm://local/C:/Users/…
+    const path = require('path')
     const url = new URL(request.url)
     let filePath = decodeURIComponent(url.pathname)
     // On Windows the path is /C:/… — strip the leading slash
     if (process.platform === 'win32' && /^\/[A-Za-z]:\//.test(filePath)) filePath = filePath.slice(1)
-    if (filePath.includes('..')) return new Response('Forbidden', { status: 403 })
+    // Resolve and validate against allowlist (catches .. after decoding)
+    let resolved: string
+    try { resolved = path.resolve(filePath) } catch { return new Response('Bad Request', { status: 400 }) }
+    if (!path.isAbsolute(resolved) || !isPathAllowed(resolved)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    // Only serve image types — this protocol exists to display user-selected images
+    const ext = resolved.split('.').pop()?.toLowerCase() ?? ''
+    const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }
+    if (!mime[ext]) return new Response('Forbidden', { status: 403 })
     try {
-      const data = readFileSync(filePath)
-      const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
-      const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }
-      return new Response(data, { headers: { 'Content-Type': mime[ext] ?? 'application/octet-stream' } })
+      const data = readFileSync(resolved)
+      return new Response(data, { headers: { 'Content-Type': mime[ext] } })
     } catch {
       return new Response('Not Found', { status: 404 })
     }

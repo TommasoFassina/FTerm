@@ -139,6 +139,16 @@ contextBridge.exposeInMainWorld('fterm', {
     ipcRenderer.on('shortcut:history-search', fn)
     return () => ipcRenderer.removeListener('shortcut:history-search', fn)
   },
+  onPetShake: (cb: () => void) => {
+    const fn = () => cb()
+    ipcRenderer.on('pet:shake', fn)
+    return () => ipcRenderer.removeListener('pet:shake', fn)
+  },
+  onPetStill: (cb: () => void) => {
+    const fn = () => cb()
+    ipcRenderer.on('pet:still', fn)
+    return () => ipcRenderer.removeListener('pet:still', fn)
+  },
   getSystemMetrics: () => ipcRenderer.invoke('system:metrics'),
   pingHost: (host: string, count?: number) => ipcRenderer.invoke('system:ping', host, count),
   portScan: (host: string, ports: number[]) => ipcRenderer.invoke('system:portscan', host, ports),

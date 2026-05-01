@@ -76,6 +76,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   useLayoutEffect(() => {
     if (!containerRef.current || termRef.current) return
 
+    let inAltScreen = false;
+    const isTUI = () => inAltScreen || termRef.current?.buffer.active.type === 'alternate';
+
     const term = new Terminal({
       fontSize: settings.fontSize,
       fontFamily: settings.fontFamily,
@@ -85,7 +88,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       scrollback: settings.scrollback,
       allowTransparency: true,
       allowProposedApi: true,
-
+      // ConPTY hint: fixes line-rewrap and cursor-position glitches in TUI apps
+      // (claude code, vim, etc.) on Windows. backend=conpty for Win10+, frontend=v5.
+      windowsPty: { backend: 'conpty', buildNumber: 19041 },
       theme: buildXtermTheme(theme),
     })
     ;(term.options as any).copyOnSelect = settings.copyOnSelect !== false
@@ -122,9 +127,12 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
 
     const container = containerRef.current
     const handleWheel = (e: WheelEvent) => {
+      if (!termRef.current) return
+      // In alt-screen TUI (claude code, less, htop): let xterm forward wheel as mouse
+      // events so the app can scroll its own lists/panes.
+      if (isTUI()) return
       e.preventDefault()
       e.stopPropagation()            // prevent xterm's own wheel handler
-      if (!termRef.current) return
       const lines = e.deltaMode === WheelEvent.DOM_DELTA_LINE
         ? Math.round(e.deltaY)
         : Math.sign(e.deltaY) * Math.max(1, Math.round(Math.abs(e.deltaY) / 40))
@@ -181,10 +189,21 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     fit.fit()
     setScrollInfo({ viewportY: 0, baseY: 0, rows: term.rows })
     termRef.current = term
-    pluginManager.notifyTerminalReady(term, instanceId)
+
+    pluginManager.registerTerminal(instanceId, term)
+    // Notify plugins after first PTY data so banner renders below the shell's initial prompt
+    const removeReadyNotify = window.fterm.onPtyData(instanceId, () => {
+      removeReadyNotify()
+      pluginManager.notifyTerminalReady(term, instanceId)
+    })
+
+    const onFocusHandler = () => { (window as any).__ftermActiveTerminal = term }
+    const onBlurHandler = () => { if ((window as any).__ftermActiveTerminal === term) (window as any).__ftermActiveTerminal = null }
+    term.textarea?.addEventListener('focus', onFocusHandler)
+    term.textarea?.addEventListener('blur', onBlurHandler)
 
     if (active) {
-      setTimeout(() => term.focus(), 50)
+      setTimeout(() => { term.focus(); (window as any).__ftermActiveTerminal = term }, 50)
     }
 
     // Resolve initial CWD: prefer persisted currentCwd (survives app restart)
@@ -254,6 +273,30 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         disposeAllDecorations();
       }
 
+      // Track alt-screen (TUI apps: vim, claude code, less, htop). Ignore error/pet
+      // detection while active — TUI text often contains the word "error" in normal UI,
+      // and ConPTY redraws would otherwise spam markers and pet sad-state.
+      if (/\x1b\[\?1049h|\x1b\[\?47h|\x1b\[\?1047h/.test(rawData)) {
+        inAltScreen = true;
+        disposeAllDecorations();
+        autocompleteRef.current = null;
+        updateAcUI(null);
+        currentInputRef.current = '';
+      }
+      if (/\x1b\[\?1049l|\x1b\[\?47l|\x1b\[\?1047l/.test(rawData)) {
+        inAltScreen = false;
+        recentDataBuf = '';
+        // ConPTY occasionally leaves residual TUI rows in the main buffer when an
+        // alt-screen app (claude code, etc.) exits via Esc. Force a redraw + scroll
+        // to bottom so the restored main buffer renders cleanly.
+        setTimeout(() => {
+          try {
+            termRef.current?.refresh(0, (termRef.current?.rows ?? 1) - 1)
+            termRef.current?.scrollToBottom()
+          } catch { /* terminal disposed */ }
+        }, 32)
+      }
+
       // Parse OSC 9998 first — clean prompt (exit=0) means stale error content should be discarded
       const osc9998 = rawData.match(/\x1b\]9998;(\d+)(?:\x07|\x1b\\)/)
       const exitCodeError = osc9998 ? parseInt(osc9998[1], 10) !== 0 : false
@@ -274,6 +317,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
 
 
       term.write(rawData, () => {
+        if (isTUI()) return;
         // exitCodeError: reliable for PS (LASTEXITCODE reset each prompt, so no stale re-trigger)
         // cmdNotFound: CMD locale-agnostic text match
         // bufHasError: text match only when no prompt in this chunk (avoids false-positives from success output containing "error")
@@ -307,9 +351,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           }
         }
       });
-      // Pet activity detection from terminal output
+      // Pet activity detection from terminal output — skip in TUI apps (claude code, vim, etc.)
       const stripped = rawData.replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '').replace(/\r/g, '').trim()
-      if (stripped.length > 3) {
+      if (!isTUI() && stripped.length > 3) {
         const reaction = analyzeOutput(stripped)
         if (reaction) {
           const curState = useStore.getState().petState
@@ -362,6 +406,40 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     };
 
     term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+Shift+L: force redraw + scroll-to-bottom — escape hatch for stuck
+      // TUI ghosting (claude code etc. that left residual rows on Esc).
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+        e.preventDefault()
+        try {
+          term.refresh(0, term.rows - 1)
+          term.scrollToBottom()
+        } catch { /* ignore */ }
+        return false
+      }
+
+      // TUI mode (Claude Code, vim, less): pass keys through to app.
+      // Only intercept Ctrl+Shift+C/V (clipboard) — everything else is the app's.
+      if (isTUI()) {
+        if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+          e.preventDefault()
+          const sel = term.getSelection()
+          if (sel) navigator.clipboard.writeText(sel).catch(() => { })
+          return false
+        }
+        if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+          e.preventDefault()
+          navigator.clipboard.readText().then(text => {
+            if (!text) return
+            // Use bracketed paste if app enabled it (xterm tracks DECSET 2004)
+            const bp = (term as any).modes?.bracketedPasteMode
+            const payload = bp ? `\x1b[200~${text}\x1b[201~` : text
+            window.fterm.ptyWrite(instanceId, payload)
+          }).catch(() => { })
+          return false
+        }
+        return true
+      }
+
       // ── Shift+Arrow keyboard selection ───────────────────────────────────
       const isShiftArrow = e.shiftKey && (
         e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
@@ -697,6 +775,12 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         })
       }),
       term.onData(data => {
+        // TUI app active (claude code, vim, etc.): forward raw, skip input tracking + autocomplete + pet
+        if (isTUI()) {
+          window.fterm.ptyWrite(instanceId, data);
+          if (autocompleteRef.current) { autocompleteRef.current = null; updateAcUI(null); }
+          return;
+        }
         // Sporadic pet activity on typing
         const now = Date.now();
         if (now - (window.__ftermLastPetUpdate || 0) > 10000) {
@@ -832,6 +916,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       }),
 
       term.onSelectionChange(() => {
+        // Skip copy-on-select in TUI — mouse drag in claude code/vim is for app selection,
+        // not clipboard, and writing to clipboard mid-drag fights the app.
+        if (isTUI()) return
         if (useStore.getState().settings.copyOnSelect !== false) {
           const sel = term.getSelection()
           if (sel) navigator.clipboard.writeText(sel)
@@ -849,8 +936,11 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       disposeAllDecorations()
       disposables.forEach(d => d.dispose())
       // We DO NOT call window.fterm.ptyKill(instanceId) anymore to persist the PTY backgrounds
+      term.textarea?.removeEventListener('focus', onFocusHandler)
+      term.textarea?.removeEventListener('blur', onBlurHandler)
       searchAddons.delete(instanceId)
       terminalInstances.delete(instanceId)
+      pluginManager.unregisterTerminal(instanceId)
       // Dispose renderer addons first — their dispose() tries to restore the
       // default renderer which crashes if the terminal is already torn down.
       try { webglRef.current?.dispose() } catch { /* already gone */ }
@@ -1015,6 +1105,8 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       onClick={() => { if (!activeWidget) { setActivePane(tabId, paneId); termRef.current?.focus() } setCtxMenu(null) }}
       onMouseEnter={() => { if (!activeWidget) termRef.current?.focus() }}
       onContextMenuCapture={(e) => {
+        // TUI app may want right-click (mouse tracking). Skip our menu.
+        if (termRef.current?.buffer.active.type === 'alternate') return
         e.preventDefault()
         setActivePane(tabId, paneId)
         setCtxMenu({ x: e.clientX, y: e.clientY })

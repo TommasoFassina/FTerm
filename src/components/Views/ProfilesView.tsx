@@ -125,17 +125,17 @@ export default function ProfilesView() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.18 }}
-      className="flex flex-col h-full w-full max-w-5xl mx-auto p-6 relative"
+      className="flex flex-col h-full w-full max-w-5xl mx-auto p-4 sm:p-6 relative"
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 shrink-0">
         <div>
           <h2 className="text-xl font-semibold text-white">Profiles</h2>
           <p className="text-[12px] text-white/35 mt-0.5">Launch terminals with preset shells, directories, and environments</p>
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-2 px-3.5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-[13px] font-medium text-white transition-colors"
+          className="flex items-center justify-center gap-2 px-3.5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-[13px] font-medium text-white transition-colors shrink-0 self-start sm:self-auto"
         >
           <Plus size={14} /> New Profile
         </button>
@@ -215,7 +215,7 @@ export default function ProfilesView() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 flex items-center justify-center p-6"
+            className="absolute inset-0 z-50 flex items-center justify-center p-3 sm:p-6"
             style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', borderRadius: '0.75rem' }}
             onClick={e => { if (e.target === e.currentTarget) close() }}
           >

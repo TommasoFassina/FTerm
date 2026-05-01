@@ -84,7 +84,7 @@ interface FTermState {
   deleteProfile: (id: string) => void
   plugins: { id: string, name: string, description: string, enabled: boolean, isCustom?: boolean, code?: string }[]
   togglePlugin: (id: string) => void
-  addCustomPlugin: (plugin: { name: string, description: string, code: string, enabled: boolean }) => void
+  addCustomPlugin: (plugin: { name: string, description: string, code: string, enabled: boolean }) => string
   updateCustomPlugin: (id: string, updates: Partial<{ name: string, description: string, code: string, enabled: boolean }>) => void
   deleteCustomPlugin: (id: string) => void
 
@@ -402,9 +402,7 @@ export const useStore = create<FTermState>()(
         profiles: state.profiles.filter(p => p.id !== id)
       })),
       plugins: [
-        { id: 'git-status', name: 'Git Status Integrator', description: 'Shows branch info and modified file counts.', enabled: true },
-        { id: 'npm-watcher', name: 'NPM Watcher', description: 'Monitors package.json changes.', enabled: false },
-        { id: 'auto-theme', name: 'Auto Theme Switcher', description: 'Changes theme based on time of day.', enabled: true },
+        { id: 'auto-theme', name: 'Auto Theme Switcher', description: 'Changes theme based on time of day (morning→Tokyo Night, afternoon→Nord, evening→Dracula, night→GitHub Dark).', enabled: true },
         { id: 'file-explorer', name: 'File Explorer', description: 'Run `explore [path]` to browse files as an interactive widget.', enabled: true },
         { id: 'sys-mon', name: 'System Monitor', description: 'Run `sys-mon` to view live CPU/RAM/network charts.', enabled: true },
         { id: 'docker', name: 'Docker Dashboard', description: 'Run `docker-dash` to manage containers interactively.', enabled: true },
@@ -414,9 +412,13 @@ export const useStore = create<FTermState>()(
       togglePlugin: (id: string) => set(state => ({
         plugins: state.plugins.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p)
       })),
-      addCustomPlugin: (plugin) => set(state => ({
-        plugins: [...state.plugins, { ...plugin, id: `plugin-${Date.now()}`, isCustom: true }]
-      })),
+      addCustomPlugin: (plugin) => {
+        const id = `plugin-${Date.now()}`
+        set(state => ({
+          plugins: [...state.plugins, { ...plugin, id, isCustom: true }]
+        }))
+        return id
+      },
       updateCustomPlugin: (id, updates) => set(state => ({
         plugins: state.plugins.map(p => p.id === id ? { ...p, ...updates } : p)
       })),
@@ -975,6 +977,17 @@ export const useStore = create<FTermState>()(
         petProgress: { ...(persisted as Record<string, unknown>)?.petProgress as Record<string, unknown> },
         ai: { ...current.ai, ...persisted?.ai },
         settings: { ...current.settings, ...persisted?.settings },
+        // Merge plugins: keep built-ins (with persisted enabled state), append custom plugins
+        plugins: (() => {
+          const persistedPlugins: typeof current.plugins = (persisted as any)?.plugins ?? []
+          const persistedMap = new Map(persistedPlugins.map((p: any) => [p.id, p]))
+          const builtins = current.plugins.map(p => ({
+            ...p,
+            enabled: (persistedMap.get(p.id) as any)?.enabled ?? p.enabled,
+          }))
+          const customPlugins = persistedPlugins.filter((p: any) => p.isCustom)
+          return [...builtins, ...customPlugins]
+        })(),
         chatMessages: persisted?.chatMessages ?? [],
         snippets: (persisted as any)?.snippets ?? [],
         savedLayouts: (persisted as any)?.savedLayouts ?? [],
@@ -1006,6 +1019,7 @@ export const useStore = create<FTermState>()(
           providerStatus: {},  // reset on load; runtime state only
           sidebarOpen: false,
         },
+        plugins: s.plugins,
         snippets: s.snippets,
         savedLayouts: s.savedLayouts,
         keybindings: s.keybindings,

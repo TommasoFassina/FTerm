@@ -1,6 +1,7 @@
 import { useStore } from '@/store'
 import { motion } from 'motion/react'
 import { Zap, Shield, Sparkles } from 'lucide-react'
+import { SPRITES, STATE_COLORS } from '@/components/Pet/PetData'
 
 export default function PetView() {
     const DEFAULT_NAMES: Record<string, string> = {
@@ -18,14 +19,14 @@ export default function PetView() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="flex flex-col h-full w-full max-w-5xl mx-auto p-6"
+            className="flex flex-col h-full w-full max-w-5xl mx-auto p-4 sm:p-6 overflow-y-auto"
         >
-            <div className="flex items-center justify-between mb-8 shrink-0">
-                <div>
-                    <h1 className="text-2xl font-bold text-white mb-2">Terminal Companion</h1>
-                    <p className="text-sm text-[#8b949e]">Manage your virtual pet, view stats, and swap out styles.</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8 shrink-0">
+                <div className="min-w-0">
+                    <h1 className="text-xl sm:text-2xl font-bold text-white mb-1 sm:mb-2">Terminal Companion</h1>
+                    <p className="text-xs sm:text-sm text-[#8b949e]">Manage your virtual pet, view stats, and swap out styles.</p>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 shrink-0">
                     <button
                         onClick={() => setPetConfig({ visible: !pet.visible })}
                         className={`px-4 py-2 rounded font-medium text-sm transition-colors ${pet.visible
@@ -38,13 +39,13 @@ export default function PetView() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
 
                 {/* Left Column: Stats & XP */}
                 <div className="md:col-span-1 flex flex-col gap-6">
                     <div className="p-6 rounded-xl bg-black/40 border border-white/10 backdrop-blur-md flex flex-col items-center justify-center text-center">
-                        <div className="w-24 h-24 rounded-full bg-white/5 border-2 border-white/20 flex items-center justify-center mb-4 text-4xl">
-                            {pet.type === 'cat' ? '🐱' : pet.type === 'dog' ? '🐶' : pet.type === 'dragon' ? '🐲' : pet.type === 'robot' ? '🤖' : pet.type === 'ghost' ? '👻' : '🦊'}
+                        <div className="w-24 h-24 rounded-full bg-white/5 border-2 border-white/20 flex items-center justify-center mb-4">
+                            <pre className={`font-mono text-[9px] leading-tight select-none ${STATE_COLORS['idle']}`}>{SPRITES[pet.type]?.idle?.[0]}</pre>
                         </div>
                         <input
                             value={pet.name}
@@ -126,9 +127,7 @@ export default function PetView() {
                                         : 'bg-white/5 border-transparent text-[#8b949e] hover:bg-white/10 hover:text-white'
                                         }`}
                                 >
-                                    <span className="text-2xl">
-                                        {type === 'cat' ? '🐱' : type === 'dog' ? '🐶' : type === 'dragon' ? '🐲' : type === 'robot' ? '🤖' : type === 'ghost' ? '👻' : '🦊'}
-                                    </span>
+                                    <pre className={`font-mono text-[7px] leading-tight select-none ${pet.type === type ? STATE_COLORS['idle'] : 'text-[#8b949e]'}`}>{SPRITES[type]?.idle?.[0]}</pre>
                                     <span className="text-xs font-medium">{progress.name}</span>
                                     <span className="text-[10px] text-[#8b949e]">Lv.{progress.level}</span>
                                 </button>

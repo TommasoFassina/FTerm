@@ -18,9 +18,11 @@ export default function Pet() {
   const [frameIdx, setFrameIdx] = useState(0)
   const [bubble, setBubble] = useState<string | null>(null)
   const [prevState, setPrevState] = useState<PetState>(petState)
+  const [shaking, setShaking] = useState(false)
   const lastInteractionRef = useRef(Date.now())
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressStateBubbleRef = useRef(false)
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const sprites = SPRITES[pet.type]
 
@@ -82,6 +84,61 @@ export default function Pet() {
       }
     }, 60_000)
     return () => clearInterval(interval)
+  }, [setPetState])
+
+  // Easter egg: react when user shakes the window; revert when still
+  useEffect(() => {
+    const offShake = window.fterm.onPetShake?.(() => {
+      lastInteractionRef.current = Date.now()
+      suppressStateBubbleRef.current = true
+      setShaking(true)
+      const text = pickDialogue(pet.type, 'worried', 'shake')
+      if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current)
+      setBubble(text)
+      bubbleTimerRef.current = setTimeout(() => { setBubble(null); bubbleTimerRef.current = null }, 3500)
+      setPetState('worried')
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+    })
+    const offStill = window.fterm.onPetStill?.(() => {
+      setShaking(false)
+      if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current)
+      if (useStore.getState().petState === 'worried') setPetState('idle')
+    })
+    return () => { offShake?.(); offStill?.() }
+  }, [pet.type, setPetState])
+
+  // Easter egg: Konami code → super celebration
+  useEffect(() => {
+    const sequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a']
+    let idx = 0
+    let resetTimer: ReturnType<typeof setTimeout> | null = null
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      const expected = sequence[idx]
+      const key = expected.length === 1 ? e.key.toLowerCase() : e.key
+      if (key === expected) {
+        idx++
+        if (resetTimer) clearTimeout(resetTimer)
+        resetTimer = setTimeout(() => { idx = 0 }, 1500)
+        if (idx === sequence.length) {
+          idx = 0
+          lastInteractionRef.current = Date.now()
+          suppressStateBubbleRef.current = true
+          if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current)
+          setBubble('★ KONAMI! 30 LIVES UNLOCKED ★')
+          bubbleTimerRef.current = setTimeout(() => { setBubble(null); bubbleTimerRef.current = null }, 5000)
+          setPetState('celebrating')
+          setTimeout(() => {
+            if (useStore.getState().petState === 'celebrating') setPetState('idle')
+          }, 5000)
+        }
+      } else {
+        idx = key === sequence[0] ? 1 : 0
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey); if (resetTimer) clearTimeout(resetTimer) }
   }, [setPetState])
 
   // Single entry-point for all bubble display — cancels any in-flight timer
@@ -162,19 +219,33 @@ export default function Pet() {
       {/* Pet sprite */}
       <motion.div
         animate={
-          petState === 'celebrating'
-            ? { y: [0, -10, 0], rotate: [-6, 6, -6, 0] }
-            : petState === 'happy'
-              ? { y: [0, -4, 0] }
-              : petState === 'sleeping'
-                ? { opacity: [1, 0.5, 1] }
-                : petState === 'worried'
-                  ? { x: [-1, 1, -1, 0] }
-                  : {}
+          shaking
+            ? { x: [-6, 6, -5, 5, -3, 3, 0], rotate: [-8, 8, -6, 6, 0] }
+            : petState === 'celebrating'
+              ? { x: 0, y: [0, -10, 0], rotate: [-6, 6, -6, 0] }
+              : petState === 'happy'
+                ? { x: 0, rotate: 0, y: [0, -4, 0] }
+                : petState === 'sleeping'
+                  ? { x: 0, rotate: 0, y: 0, opacity: [1, 0.5, 1] }
+                  : petState === 'worried'
+                    ? { rotate: 0, y: 0, x: [-1, 1, -1, 0] }
+                    : { x: 0, y: 0, rotate: 0, opacity: 1 }
         }
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
-        transition={{ repeat: Infinity, duration: petState === 'celebrating' ? 0.4 : petState === 'worried' ? 0.3 : petState === 'happy' ? 0.6 : 2 }}
+        transition={
+          shaking
+            ? { repeat: Infinity, duration: 0.25 }
+            : petState === 'celebrating'
+              ? { repeat: Infinity, duration: 0.4 }
+              : petState === 'worried'
+                ? { repeat: Infinity, duration: 0.3 }
+              : petState === 'happy'
+                ? { repeat: Infinity, duration: 0.6 }
+              : petState === 'sleeping'
+                ? { repeat: Infinity, duration: 2 }
+              : { duration: 0.25 }
+        }
         className={`font-mono text-[11px] leading-tight whitespace-pre ${color} cursor-pointer pointer-events-auto`}
         style={{ filter: 'drop-shadow(0 0 6px rgba(0,0,0,0.9)) drop-shadow(0 1px 3px rgba(0,0,0,0.8))' }}
         title={`${pet.name} — Click to pet!`}

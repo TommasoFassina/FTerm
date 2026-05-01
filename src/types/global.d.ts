@@ -76,6 +76,8 @@ interface FTermAPI {
   openExternal: (url: string) => void
   openPath: (filePath: string) => void
   onHistorySearch: (cb: () => void) => () => void
+  onPetShake: (cb: () => void) => () => void
+  onPetStill: (cb: () => void) => () => void
   getSystemMetrics: () => Promise<{ cpus: any[], freeMem: number, totalMem: number, platform: string, release: string, hostname: string, username: string, arch: string, uptime: number, network: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number } }>
   pingHost: (host: string, count?: number) => Promise<{ host: string; rtts: number[]; lost: number; avg: number; min: number; max: number; count: number }>
   portScan: (host: string, ports: number[]) => Promise<{ port: number; open: boolean }[]>

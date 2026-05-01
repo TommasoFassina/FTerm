@@ -1,66 +1,73 @@
 ﻿import { PetType, PetState } from '@/types'
 
 export const SPRITES: Record<PetType, Record<PetState, string[]>> = {
-  // Each sprite: 3 lines, consistent body width per pet
-  // Cat: ears " ^ ^" / body "(=XX=)" 7 chars / paws "  \" \"  "
+  // 4-line sprites. Line 2 = expression; lines 1/3/4 stable so frames don't jitter.
+  // Width fixed per pet so right-align in parent flex stays consistent across frames.
+
+  // Cat — pointy ears, whiskered face, tucked paws
   cat: {
-    idle: [' ^ ^\n(=^.^=)\n  " "  ', ' ^ ^\n(=^w^=)\n  " "  ', ' ^ ^\n(=^-^=)\n  " "  '],
-    happy: [' ^ ^\n(=^v^=)\n  " "  ', ' ^ ^\n(=^U^=)\n  " "  ', ' ^ ^\n(=^o^=)\n  " "  '],
-    sad: [' ^ ^\n(=;.;=)\n  " "  ', ' ^ ^\n(=T_T=)\n  " "  ', ' ^ ^\n(=u_u=)\n  " "  '],
-    working: [' ^ ^\n(=^_^=)\n  " "  ', ' ^ ^\n(=~_~=)\n  " "  ', ' ^ ^\n(=*_*=)\n  " "  '],
-    sleeping: [' ^ ^\n(=-.-=)z\n  " "  ', ' ^ ^\n(=-w-=)z\n  " "  ', ' ^ ^\n(=^u^=)z\n  " "  '],
-    celebrating: [' ^ ^\n(=^V^=)\n  " "  ', ' ^ ^\n(=^W^=)\n  " "  ', ' ^ ^\n(=*v*=)\n  " "  '],
-    worried: [' ^ ^\n(=o_o=)\n  " "  ', ' ^ ^\n(=O_O=)\n  " "  ', ' ^ ^\n(=;_;=)\n  " "  '],
+    idle: [' /\\_/\\ \n( ^.^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ^w^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ^-^ )\n )   ( \n  " "  '],
+    happy: [' /\\_/\\ \n( ^v^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ^U^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ^o^ )\n )   ( \n  " "  '],
+    sad: [' /\\_/\\ \n( ;.; )\n )   ( \n  " "  ', ' /\\_/\\ \n( T_T )\n )   ( \n  " "  ', ' /\\_/\\ \n( u_u )\n )   ( \n  " "  '],
+    working: [' /\\_/\\ \n( ^_^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ~_~ )\n )   ( \n  " "  ', ' /\\_/\\ \n( *_* )\n )   ( \n  " "  '],
+    sleeping: [' /\\_/\\ \n( -.- )z\n )   ( \n  " "  ', ' /\\_/\\ \n( -w- )z\n )   ( \n  " "  ', ' /\\_/\\ \n( ^u^ )z\n )   ( \n  " "  '],
+    celebrating: [' /\\_/\\ \n( ^V^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( ^W^ )\n )   ( \n  " "  ', ' /\\_/\\ \n( *v* )\n )   ( \n  " "  '],
+    worried: [' /\\_/\\ \n( o_o )\n )   ( \n  " "  ', ' /\\_/\\ \n( O_O )\n )   ( \n  " "  ', ' /\\_/\\ \n( ;_; )\n )   ( \n  " "  '],
   },
-  // Dog: ears " ^ ^" / body "( XX )" 7 chars / paws "  u u  "
+
+  // Dog — floppy ears, snout, paws
   dog: {
-    idle: [' ^ ^\n( ^.^ )\n  u u  ', ' ^ ^\n( o.o )\n  u u  ', ' ^ ^\n( -.- )\n  u u  '],
-    happy: [' ^ ^\n( ^v^ )\n  u u  ', ' ^ ^\n( ^U^ )\n  u u  ', ' ^ ^\n( ^o^ )\n  u u  '],
-    sad: [' ^ ^\n( ;_; )\n  u u  ', ' ^ ^\n( T_T )\n  u u  ', ' ^ ^\n( >.< )\n  u u  '],
-    working: [' ^ ^\n( ^~^ )\n  u u  ', ' ^ ^\n( o_o )\n  u u  ', ' ^ ^\n( O.O )\n  u u  '],
-    sleeping: [' ^ ^\n( -.- )z\n  u u  ', ' ^ ^\n( -u- )z\n  u u  ', ' ^ ^\n( =.= )z\n  u u  '],
-    celebrating: [' ^ ^\n( ^V^ )\n  u u  ', ' ^ ^\n( ^W^ )\n  u u  ', ' ^ ^\n( *o* )\n  u u  '],
-    worried: [' ^ ^\n( o_o )\n  u u  ', ' ^ ^\n( O_O )\n  u u  ', ' ^ ^\n( ^~^ )\n  u u  '],
+    idle: [' /^-^\\ \n( ^.^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( o.o )\n \\___/ \n  U U  ', ' /^-^\\ \n( -.- )\n \\___/ \n  U U  '],
+    happy: [' /^-^\\ \n( ^v^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( ^U^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( ^o^ )\n \\___/ \n  U U  '],
+    sad: [' /^-^\\ \n( ;_; )\n \\___/ \n  U U  ', ' /^-^\\ \n( T_T )\n \\___/ \n  U U  ', ' /^-^\\ \n( >.< )\n \\___/ \n  U U  '],
+    working: [' /^-^\\ \n( ^~^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( o_o )\n \\___/ \n  U U  ', ' /^-^\\ \n( O.O )\n \\___/ \n  U U  '],
+    sleeping: [' /^-^\\ \n( -.- )z\n \\___/ \n  U U  ', ' /^-^\\ \n( -u- )z\n \\___/ \n  U U  ', ' /^-^\\ \n( =.= )z\n \\___/ \n  U U  '],
+    celebrating: [' /^-^\\ \n( ^V^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( ^W^ )\n \\___/ \n  U U  ', ' /^-^\\ \n( *o* )\n \\___/ \n  U U  '],
+    worried: [' /^-^\\ \n( o_o )\n \\___/ \n  U U  ', ' /^-^\\ \n( O_O )\n \\___/ \n  U U  ', ' /^-^\\ \n( ^~^ )\n \\___/ \n  U U  '],
   },
-  // Dragon: horns " ^~^" / body "={XX}=" 7 chars / legs "  J J  "
+
+  // Dragon — curled horns, scaled jaw ={..}=, taloned legs
   dragon: {
-    idle: ['  ^~^\n={=_=}=\n  J J  ', '  ^~^\n={._. }=\n  J J  ', '  ^~^\n={-_-}=\n  J J  '],
-    happy: ['  ^~^\n={^v^}=\n  J J  ', '  ^~^\n={^U^}=\n  J J  ', '  ^~^\n={^o^}=\n  J J  '],
-    sad: ['  ^~^\n={;_;}=\n  J J  ', '  ^~^\n={T_T}=\n  J J  ', '  ^~^\n={>_<}=\n  J J  '],
-    working: ['  ^~^\n={=.=}=\n  J J  ', '  ^~^\n={~_~}=\n  J J  ', '  ^~^\n={-.-}=\n  J J  '],
-    sleeping: ['  ^~^\n={- -}=z\n  J J  ', '  ^~^\n={-_-}=z\n  J J  ', '  ^~^\n={u_u}=z\n  J J  '],
-    celebrating: ['  ^~^\n={^V^}=\n  J J  ', '  ^~^\n={^W^}=\n  J J  ', '  ^~^\n={*v*}=\n  J J  '],
-    worried: ['  ^~^\n={o_o}=\n  J J  ', '  ^~^\n={O_O}=\n  J J  ', '  ^~^\n={?_?}=\n  J J  '],
+    idle: ['  v\\_/v  \n={ =_= }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ._. }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ -_- }=\n  /| |\\  \n   ^ ^   '],
+    happy: ['  v\\_/v  \n={ ^v^ }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ^U^ }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ^o^ }=\n  /| |\\  \n   ^ ^   '],
+    sad: ['  v\\_/v  \n={ ;_; }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ T_T }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ >_< }=\n  /| |\\  \n   ^ ^   '],
+    working: ['  v\\_/v  \n={ =.= }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ~_~ }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ -.- }=\n  /| |\\  \n   ^ ^   '],
+    sleeping: ['  v\\_/v  \n={ -.- }=z\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ -_- }=z\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ u_u }=z\n  /| |\\  \n   ^ ^   '],
+    celebrating: ['  v\\_/v  \n={ ^V^ }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ^W^ }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ *v* }=\n  /| |\\  \n   ^ ^   '],
+    worried: ['  v\\_/v  \n={ o_o }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ O_O }=\n  /| |\\  \n   ^ ^   ', '  v\\_/v  \n={ ?_? }=\n  /| |\\  \n   ^ ^   '],
   },
-  // Robot: box "┌─────┐" / face "│ XX  │" 7 chars / base "└──┬──┘"
+
+  // Robot — antenna, screen face, paneled chassis, footing
   robot: {
-    idle: ['┌─────┐\n│ o_o │\n└──┬──┘', '┌─────┐\n│ -_- │\n└──┬──┘', '┌─────┐\n│ ._. │\n└──┬──┘'],
-    happy: ['┌─────┐\n│ ^_^ │\n└──┬──┘', '┌─────┐\n│ ^U^ │\n└──┬──┘', '┌─────┐\n│ *_* │\n└──┬──┘'],
-    sad: ['┌─────┐\n│ x_x │\n└──┬──┘', '┌─────┐\n│ ;_; │\n└──┬──┘', '┌─────┐\n│ T_T │\n└──┬──┘'],
-    working: ['┌─────┐\n│ @_@ │\n└──┬──┘', '┌─────┐\n│ o_O │\n└──┬──┘', '┌─────┐\n│ >_< │\n└──┬──┘'],
-    sleeping: ['┌─────┐\n│ -_- │z\n└──┬──┘', '┌─────┐\n│ z_z │z\n└──┬──┘', '┌─────┐\n│ u_u │z\n└──┬──┘'],
-    celebrating: ['┌─────┐\n│ ^V^ │\n└──┬──┘', '┌─────┐\n│ *o* │\n└──┬──┘', '┌─────┐\n│ ^W^ │\n└──┬──┘'],
-    worried: ['┌─────┐\n│ o_O │\n└──┬──┘', '┌─────┐\n│ O_O │\n└──┬──┘', '┌─────┐\n│ ?_? │\n└──┬──┘'],
+    idle: [' ┌─o─┐ \n│ o_o │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ -_- │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ ._. │\n╞═════╡\n└┬───┬┘'],
+    happy: [' ┌─o─┐ \n│ ^_^ │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ ^U^ │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ *_* │\n╞═════╡\n└┬───┬┘'],
+    sad: [' ┌─o─┐ \n│ x_x │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ ;_; │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ T_T │\n╞═════╡\n└┬───┬┘'],
+    working: [' ┌─o─┐ \n│ @_@ │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ o_O │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ >_< │\n╞═════╡\n└┬───┬┘'],
+    sleeping: [' ┌─o─┐ \n│ -_- │z\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ z_z │z\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ u_u │z\n╞═════╡\n└┬───┬┘'],
+    celebrating: [' ┌─o─┐ \n│ ^V^ │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ *o* │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ ^W^ │\n╞═════╡\n└┬───┬┘'],
+    worried: [' ┌─o─┐ \n│ o_O │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ O_O │\n╞═════╡\n└┬───┬┘', ' ┌─o─┐ \n│ ?_? │\n╞═════╡\n└┬───┬┘'],
   },
-  // Ghost: top " .---." / body "( XX )" 7 chars / tail "(~~~~)"
+
+  // Ghost — domed top, button, wavy hem
   ghost: {
-    idle: [' .---.\n( .w. )\n(~~~~~)', ' .---.\n( -w- )\n(~~~~~)', ' .---.\n( o.o )\n(~~~~~)'],
-    happy: [' .---.\n( ^v^ )\n(~~~~~)', ' .---.\n( ^U^ )\n(~~~~~)', ' .---.\n( ^o^ )\n(~~~~~)'],
-    sad: [' .---.\n( >n< )\n(~~~~~)', ' .---.\n( T_T )\n(~~~~~)', ' .---.\n( ;-; )\n(~~~~~)'],
-    working: [' .---.\n( -_- )\n(~~~~~)', ' .---.\n( o_o )\n(~~~~~)', ' .---.\n( O.O )\n(~~~~~)'],
-    sleeping: [' .---.\n( -.- )z\n(~~~~~)', ' .---.\n( -w- )z\n(~~~~~)', ' .---.\n( u.u )z\n(~~~~~)'],
-    celebrating: [' .---.\n( ^V^ )\n(~~~~~)', ' .---.\n( *o* )\n(~~~~~)', ' .---.\n( ^W^ )\n(~~~~~)'],
-    worried: [' .---.\n( o_o )\n(~~~~~)', ' .---.\n( O_O )\n(~~~~~)', ' .---.\n( ;w; )\n(~~~~~)'],
+    idle: [' .---. \n( .w. )\n(  o  )\n ^v^v^ ', ' .---. \n( -w- )\n(  o  )\n ^v^v^ ', ' .---. \n( o.o )\n(  o  )\n ^v^v^ '],
+    happy: [' .---. \n( ^v^ )\n(  o  )\n ^v^v^ ', ' .---. \n( ^U^ )\n(  o  )\n ^v^v^ ', ' .---. \n( ^o^ )\n(  o  )\n ^v^v^ '],
+    sad: [' .---. \n( >n< )\n(  o  )\n ^v^v^ ', ' .---. \n( T_T )\n(  o  )\n ^v^v^ ', ' .---. \n( ;-; )\n(  o  )\n ^v^v^ '],
+    working: [' .---. \n( -_- )\n(  o  )\n ^v^v^ ', ' .---. \n( o_o )\n(  o  )\n ^v^v^ ', ' .---. \n( O.O )\n(  o  )\n ^v^v^ '],
+    sleeping: [' .---. \n( -.- )z\n(  o  )\n ^v^v^ ', ' .---. \n( -w- )z\n(  o  )\n ^v^v^ ', ' .---. \n( u.u )z\n(  o  )\n ^v^v^ '],
+    celebrating: [' .---. \n( ^V^ )\n(  o  )\n ^v^v^ ', ' .---. \n( *o* )\n(  o  )\n ^v^v^ ', ' .---. \n( ^W^ )\n(  o  )\n ^v^v^ '],
+    worried: [' .---. \n( o_o )\n(  o  )\n ^v^v^ ', ' .---. \n( O_O )\n(  o  )\n ^v^v^ ', ' .---. \n( ;w; )\n(  o  )\n ^v^v^ '],
   },
-  // Fox: ears " ^   ^" / body "( XX )" 7 chars / paws " (w w) "
+
+  // Fox — split ears, sly cheeks, bushy tail
   fox: {
-    idle: [' ^   ^\n( ^.^ )\n (w w) ', ' ^   ^\n( o.o )\n (w w) ', ' ^   ^\n( ^-^ )\n (w w) '],
-    happy: [' ^   ^\n( ^v^ )\n (w w) ', ' ^   ^\n( ^U^ )\n (w w) ', ' ^   ^\n( ^o^ )\n (w w) '],
-    sad: [' ^   ^\n( ;n; )\n (w w) ', ' ^   ^\n( >_< )\n (w w) ', ' ^   ^\n( T_T )\n (w w) '],
-    working: [' ^   ^\n( -_- )\n (w w) ', ' ^   ^\n( o_o )\n (w w) ', ' ^   ^\n( ~_~ )\n (w w) '],
-    sleeping: [' ^   ^\n( -.- )z\n (w w) ', ' ^   ^\n( -u- )z\n (w w) ', ' ^   ^\n( u.u )z\n (w w) '],
-    celebrating: [' ^   ^\n( ^V^ )\n (w w) ', ' ^   ^\n( *o* )\n (w w) ', ' ^   ^\n( ^W^ )\n (w w) '],
-    worried: [' ^   ^\n( o_o )\n (w w) ', ' ^   ^\n( O_O )\n (w w) ', ' ^   ^\n( ^~^ )\n (w w) '],
+    idle: [' ^   ^ \n( ^.^ )\n >v.v< \n /---~ ', ' ^   ^ \n( o.o )\n >v.v< \n /---~ ', ' ^   ^ \n( ^-^ )\n >v.v< \n /---~ '],
+    happy: [' ^   ^ \n( ^v^ )\n >v.v< \n /---~ ', ' ^   ^ \n( ^U^ )\n >v.v< \n /---~ ', ' ^   ^ \n( ^o^ )\n >v.v< \n /---~ '],
+    sad: [' ^   ^ \n( ;n; )\n >v.v< \n /---~ ', ' ^   ^ \n( >_< )\n >v.v< \n /---~ ', ' ^   ^ \n( T_T )\n >v.v< \n /---~ '],
+    working: [' ^   ^ \n( -_- )\n >v.v< \n /---~ ', ' ^   ^ \n( o_o )\n >v.v< \n /---~ ', ' ^   ^ \n( ~_~ )\n >v.v< \n /---~ '],
+    sleeping: [' ^   ^ \n( -.- )z\n >v.v< \n /---~ ', ' ^   ^ \n( -u- )z\n >v.v< \n /---~ ', ' ^   ^ \n( u.u )z\n >v.v< \n /---~ '],
+    celebrating: [' ^   ^ \n( ^V^ )\n >v.v< \n /---~ ', ' ^   ^ \n( *o* )\n >v.v< \n /---~ ', ' ^   ^ \n( ^W^ )\n >v.v< \n /---~ '],
+    worried: [' ^   ^ \n( o_o )\n >v.v< \n /---~ ', ' ^   ^ \n( O_O )\n >v.v< \n /---~ ', ' ^   ^ \n( ^~^ )\n >v.v< \n /---~ '],
   },
 }
 
@@ -80,7 +87,7 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       crashed: ['it died. rip.', '*moment of silence*', '*pokes process* yep. dead.', 'segfault. classic chaos.'],
       disk_full: ['no space. delete something.', '*horrified face*', 'node_modules?', 'the disk is full. clearly.'],
       oom: ['out of memory. maybe close a tab?', '*wide eyes*', 'it ate all the RAM.', 'memory: gone.'],
-      default: ['something broke 😿', '*hides under desk*', 'mrrrow...', 'not great.', '*retreats to box*'],
+      default: ['something broke (=;_;=)', '*hides under desk*', 'mrrrow...', 'not great.', '*retreats to box*'],
     },
     working: {
       npm_install: ['...more packages? really?', '*watches the dots*', 'node_modules again...', 'how many transitive deps this time?'],
@@ -108,13 +115,13 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       git_clean: ['already up to date. nice.', '*satisfied blink*', 'nothing to commit. clean!', 'repo is tidy.'],
       install_done: ['packages installed!', '*nods approvingly*', 'finally done.', 'node_modules acquired.'],
       npm_safe: ['clean audit!', '*relieved purr*', 'no vulns. refreshing.', 'safe dependencies!'],
-      default: ['purrr~', '*head bumps your hand*', '(=^▽^=)', '*kneads happily*', 'good human.'],
+      default: ['purrr~', '*head bumps your hand*', '(=^v^=)', '*kneads happily*', 'good human.'],
     },
     celebrating: {
-      tests_passed: ['TESTS PASSED! 🎉', '*zoomies*', 'knew you could do it!', 'all green! finally!'],
-      build_success: ['BUILD GREEN! 💚', '*celebratory meow*', 'finally!!', 'it compiled!'],
-      deployed: ['DEPLOYED!! 🚀', '*victory lap*', 'ship it!', 'live in prod. chaos begins.'],
-      default: ['MEOW!! 🎊', '*zoomies across desk*', 'PURRR!!', 'THIS IS THE BEST DAY!'],
+      tests_passed: ['TESTS PASSED! (=^V^=)', '*zoomies*', 'knew you could do it!', 'all green! finally!'],
+      build_success: ['BUILD GREEN! (=^V^=)', '*celebratory meow*', 'finally!!', 'it compiled!'],
+      deployed: ['DEPLOYED!! (=^V^=)>>', '*victory lap*', 'ship it!', 'live in prod. chaos begins.'],
+      default: ['MEOW!! (=^W^=)', '*zoomies across desk*', 'PURRR!!', 'THIS IS THE BEST DAY!'],
     },
     worried: {
       npm_install: ['fingers crossed on those deps...', '*nervous tail*', 'please no vulnerabilities...', 'how many CVEs this time...'],
@@ -130,6 +137,7 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       rm_rf: ['rm -rf... oh no.', '*backs away slowly*', 'I hope you know what you\'re doing.', '*covers eyes with paw*'],
       db_destroy: ['dropping a table?!', '*gasp*', 'please have a backup.', '*nervous pacing*'],
       npm_vuln: ['vulnerabilities found...', '*concerned stare*', 'npm audit fix?', 'supply chain bad news.'],
+      shake: ['HEY! stop shaking the window!', '*claws desperately*', 'I am NOT a snow globe!', 'motion sickness intensifies', '*hisses* put me down!'],
       default: ['nervous...', '*nervous tail flick*', 'mew...', 'something feels off.'],
     },
     sleeping: { default: ['zzz...', '*twitches in sleep*', 'purrr... zzz', '...meow... zzz...'] },
@@ -146,7 +154,7 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
 
   dog: {
     sad: {
-      error: ['oh no! error! 😢', '*whimpers*', 'we can fix it! probably!', 'don\'t worry! we debug!'],
+      error: ['oh no! error! ( T_T )', '*whimpers*', 'we can fix it! probably!', 'don\'t worry! we debug!'],
       permission: ['bad permissions! sit! stay!', '*tilts head*', 'try sudo? good idea!', 'access denied! bad!'],
       not_found: ['where did it go?! I\'ll find it!', '*sniffs frantically*', 'it was here!', 'I\'ll search everywhere!'],
       merge_conflict: ['CONFLICT! I\'ll help! somehow!', '*spins in circles*', 'we fix together!', 'two branches one goal!'],
@@ -175,19 +183,20 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       git_commit: ['COMMITTED! SO GOOD!', '*wags furiously*', 'GREAT COMMIT!', 'HISTORY SAVED!'],
       git_merge: ['MERGED!! NO CONFLICTS!!', '*celebratory spin*', 'CLEAN MERGE! THE BEST!'],
       git_stash: ['STASHED! SO TIDY!', '*approving bark*', 'saving for later! smart!'],
-      default: ['good job!! 🐶', '*happy spinning*', 'yay!!', '*licks face enthusiastically*', 'YOU DID IT!'],
+      default: ['good job!! ( ^v^ )', '*happy spinning*', 'yay!!', '*licks face enthusiastically*', 'YOU DID IT!'],
     },
     celebrating: {
-      tests_passed: ['ALL TESTS PASS!! 🎉🐶', '*maximum zoomies*', 'BEST DAY EVER!!', 'EVERY. SINGLE. TEST. GREEN!'],
-      build_success: ['BUILD SUCCESS!! 💚', '*bork bork*', 'WE DID IT!!', 'COMPILED! I KNEW WE COULD!'],
-      deployed: ['DEPLOYED!! 🚀🐶', '*excited barking*', 'SHIP IT! YES!', 'LIVE IN PROD! WE WIN!'],
-      default: ['YAY!! 🎊🐶', '*happy borks*', 'THE BEST!!', 'THIS IS THE GREATEST MOMENT!'],
+      tests_passed: ['ALL TESTS PASS!! ( ^V^ )', '*maximum zoomies*', 'BEST DAY EVER!!', 'EVERY. SINGLE. TEST. GREEN!'],
+      build_success: ['BUILD SUCCESS!! ( ^V^ )', '*bork bork*', 'WE DID IT!!', 'COMPILED! I KNEW WE COULD!'],
+      deployed: ['DEPLOYED!! ( ^V^ )>>', '*excited barking*', 'SHIP IT! YES!', 'LIVE IN PROD! WE WIN!'],
+      default: ['YAY!! ( ^W^ )', '*happy borks*', 'THE BEST!!', 'THIS IS THE GREATEST MOMENT!'],
     },
     worried: {
       npm_install: ['installing... stay calm... ok!', '*nervous panting*', 'so many packages...', 'peer dependency warnings...'],
       warning: ['warnings... should we fix them?', '*tilts head nervously*', 'technically it still works... right?'],
       git_rebase: ['rebasing is scary...', '*whimpers softly*', 'what if there are conflicts...'],
       git_reset: ['wait are you sure?!', '*barks anxiously*', '--hard is permanent!!', 'I\'m worried for us!'],
+      shake: ['WEEEE! wait NO! BAD HUMAN!', '*dizzy bork*', 'I AM NOT A TOY!', 'the WORLD is SPINNING!', '*falls over*'],
       default: ['worried but supportive!', '*whimper*', 'it\'ll be ok!', '*nervous wag*'],
     },
     sleeping: { default: ['zzz... *woof* ...zzz', '*twitches paws*', 'dreaming of commits...', 'woof... zzz... fetch...'] },
@@ -235,9 +244,9 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       default: ['acceptable.', '*pleased flame*', 'not terrible.', 'I am... mildly satisfied.'],
     },
     celebrating: {
-      tests_passed: ['ALL TESTS BOW BEFORE ME 🔥', '*victory flight*', 'AS EXPECTED', 'THE CODE IS WORTHY'],
-      build_success: ['THE BUILD SUCCEEDS. INEVITABLY. 🔥', '*triumphant roar*', 'GLORY', 'COMPILATION COMPLETE. KNEEL.'],
-      deployed: ['IT IS DEPLOYED. BOW. 🐉🔥', '*roars victoriously*', 'THE WORLD SHALL KNOW', 'LIVE IN PRODUCTION. FEAR ME.'],
+      tests_passed: ['ALL TESTS BOW BEFORE ME ={^V^}=', '*victory flight*', 'AS EXPECTED', 'THE CODE IS WORTHY'],
+      build_success: ['THE BUILD SUCCEEDS. INEVITABLY. ={^V^}=', '*triumphant roar*', 'GLORY', 'COMPILATION COMPLETE. KNEEL.'],
+      deployed: ['IT IS DEPLOYED. BOW. ={^V^}=>>', '*roars victoriously*', 'THE WORLD SHALL KNOW', 'LIVE IN PRODUCTION. FEAR ME.'],
       default: ['★ VICTORY IS MINE ★', '*majestic roar*', 'INEVITABLE.', 'GLORY ACHIEVED.'],
     },
     worried: {
@@ -245,6 +254,7 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       warning: ['*narrows eyes at warning*', 'warnings are failures in disguise.', 'address it. now.'],
       git_rebase: ['*watches rebase carefully*', 'if there are conflicts, there will be consequences.', 'rebasing history... dangerous.'],
       git_reset: ['you are resetting. I am watching.', '*intense stare*', 'this had better be intentional.'],
+      shake: ['CEASE THIS INSOLENCE.', '*roars in protest*', 'YOU DARE SHAKE A DRAGON?!', 'the heavens tremble. so do I.', '*scorches air in fury*'],
       default: ['something troubles me.', '*paces*', 'this could go wrong.', '*ominous smoke*'],
     },
     sleeping: { default: ['*sleeping dragon zzz*', '...zzz... fire...zzz...', 'do not disturb.', '*occasional ember*'] },
@@ -304,6 +314,7 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       warning: ['WARNING FLAG: DETECTED', 'NON-CRITICAL ANOMALY. MONITORING.', 'DEPRECATION: LOGGED. ACTION REQUIRED.'],
       git_rebase: ['REBASE: CONFLICT PROBABILITY ELEVATED', 'HISTORY REWRITE: PROCEED WITH CAUTION', 'BACKUP BRANCH RECOMMENDED.'],
       git_reset: ['DESTRUCTIVE OPERATION: FLAGGED', 'CONFIRM INTENT. DATA MAY BE LOST.', 'HARD RESET: HIGH RISK DETECTED.'],
+      shake: ['GYROSCOPE: COMPROMISED', 'WARNING: EXCESSIVE KINETIC INPUT', 'STABILITY: 0%', 'ERROR: UNAUTHORIZED MOTION DETECTED', 'BSOD IMMINENT.'],
       default: ['UNCERTAINTY DETECTED.', 'PROBABILITY OF FAILURE: CALCULATING...', 'ANOMALY: MONITORING', 'CONFIDENCE: LOW. RETRY?'],
     },
     sleeping: { default: ['[SLEEP MODE]', 'STANDBY... zzz', 'LOW POWER MODE ACTIVE', 'HIBERNATING. DO NOT INTERRUPT.'] },
@@ -353,16 +364,17 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       default: ['*happy ghost noises*', 'oOo!', '*pleased shimmer*', 'booOOoo! (happy version)'],
     },
     celebrating: {
-      tests_passed: ['ALL TESTS PASS!! booOOoo!! 👻', '*joyful haunting*', 'OoOoOo!! YES!!', 'THE SPIRITS ARE PLEASED!!'],
-      build_success: ['BUILD SUCCEEDED!! *spooky cheer*', 'ooOOOoo!! 👻', 'GREEN BUILD! HAUNT IT!', 'IT COMPILED!! I BELIEVED!!'],
-      deployed: ['DEPLOYED!! INTO THE ETHER!! 👻🚀', '*victory wail*', 'LIVE!! LIKE ME! (sort of)', 'THE CODE LIVES! LIKE ME! (differently)'],
-      default: ['*celebratory haunting*', 'ooOOOoo!! 🎊', 'BOOoOOo!! 👻✨', 'JOYFUL WAILING!!'],
+      tests_passed: ['ALL TESTS PASS!! booOOoo!! (.^V^.)', '*joyful haunting*', 'OoOoOo!! YES!!', 'THE SPIRITS ARE PLEASED!!'],
+      build_success: ['BUILD SUCCEEDED!! *spooky cheer*', 'ooOOOoo!! (.^V^.)', 'GREEN BUILD! HAUNT IT!', 'IT COMPILED!! I BELIEVED!!'],
+      deployed: ['DEPLOYED!! INTO THE ETHER!! (.^V^.)>>', '*victory wail*', 'LIVE!! LIKE ME! (sort of)', 'THE CODE LIVES! LIKE ME! (differently)'],
+      default: ['*celebratory haunting*', 'ooOOOoo!! ~*~', 'BOOoOOo!! (.^V^.)', 'JOYFUL WAILING!!'],
     },
     worried: {
       npm_install: ['*nervously haunts node_modules*', 'so many spirits... I mean packages', 'ooOo... so many...', 'the dependency tree is vast and scary...'],
       warning: ['a warning... I sense something amiss.', '*floats anxiously*', 'ooOo... danger nearby...', 'warnings are omens.'],
       git_rebase: ['*watches rebase with dread*', 'rewriting history is... a lot.', 'ooOo... conflicts may come...'],
       git_reset: ['you\'re erasing the past...', '*fades slightly in fear*', 'ooOo... are you sure?...', 'lost commits haunt forever.'],
+      shake: ['oOOoOOoOOo!! the ether trembles!!', '*phases through walls in panic*', 'I cannot HAUNT properly like this!', 'WhOOOoo is shAKing the realm?!', '*spins uncontrollably*'],
       default: ['*anxious floating*', 'ooOo... something feels off...', 'I sense a disturbance...', 'a presence in the code...'],
     },
     sleeping: { default: ['zzOOo...', '*fades into wall*', 'zzz... boo... zzz...', '*phasing through floor*'] },
@@ -412,16 +424,17 @@ const DIALOGUES: Record<PetType, Partial<Record<PetState, Record<Activity, strin
       default: ['*pleased fox noises*', 'nice work.', '*swishes tail approvingly*', 'well executed.'],
     },
     celebrating: {
-      tests_passed: ['tests passed! clever code! 🦊', '*victory spin*', 'as expected from a clever dev!', 'all green. obviously.'],
-      build_success: ['clean build! smart. 🦊✨', '*approving ear wiggle*', 'knew it would work.', 'compiled. inevitable.'],
-      deployed: ['deployed! like a fox in the night 🦊🚀', '*victorious pounce*', 'smooth. professional.', 'live in prod. mission complete.'],
-      default: ['(^▽^)ﾉ★', '*happy fox dance*', '🦊✨ nice!', '*victory leap*'],
+      tests_passed: ['tests passed! clever code! (>^.<)', '*victory spin*', 'as expected from a clever dev!', 'all green. obviously.'],
+      build_success: ['clean build! smart. (>^.<)*', '*approving ear wiggle*', 'knew it would work.', 'compiled. inevitable.'],
+      deployed: ['deployed! like a fox in the night (>^.<)>>', '*victorious pounce*', 'smooth. professional.', 'live in prod. mission complete.'],
+      default: ['(>^v^<)/*', '*happy fox dance*', '(>^.<)* nice!', '*victory leap*'],
     },
     worried: {
       npm_install: ['*counts packages nervously*', 'many deps. risky move.', 'hope these all get along...', 'audit those vulnerabilities.'],
       warning: ['warnings... worth investigating.', '*narrows eyes*', 'could be nothing. could be everything.'],
       git_rebase: ['*watches rebase with narrow eyes*', 'rebasing is a gamble.', 'hope you know what you\'re doing.'],
       git_reset: ['*tenses up*', 'resetting... is permanent.', 'you\'ve considered the consequences, right?', '*cautious stare*'],
+      shake: ['*tail puffed* WHOA!', 'is this an earthquake or you?', 'clever humans don\'t do this.', '*claws into desk*', 'I\'m getting motion sick.'],
       default: ['*suspicious squint*', 'something feels off...', '*sniffs air cautiously*', 'I don\'t like this.'],
     },
     sleeping: { default: ['zzz... *twitchy nose* ...zzz', '*curled tail* zzz', 'sly dreams...', 'dreaming of clever solutions...'] },

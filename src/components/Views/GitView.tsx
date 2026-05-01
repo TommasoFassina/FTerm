@@ -253,9 +253,9 @@ export default function GitView() {
             className="flex flex-col h-full w-full max-w-6xl mx-auto p-4 gap-4 overflow-hidden"
         >
             {/* Header */}
-            <div className="flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                    <h2 className="text-xl font-bold text-white">Source Control</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                    <h2 className="text-xl font-bold text-white truncate">Source Control</h2>
                     {loading && <RefreshCw size={14} className="text-white/40 animate-spin" />}
                     {conflictCount > 0 && (
                         <span className="flex items-center gap-1 text-xs text-orange-400 bg-orange-500/15 border border-orange-500/30 px-2 py-0.5 rounded-full">
@@ -263,7 +263,7 @@ export default function GitView() {
                         </span>
                     )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                     <button
                         onClick={() => refreshGitStatus()}
                         disabled={loading}
@@ -275,17 +275,19 @@ export default function GitView() {
                     <button
                         onClick={() => gitPull(defaultRemote, status?.branch || 'main')}
                         disabled={loading || !status?.branch}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600/40 hover:bg-blue-600/60 text-white disabled:opacity-50 transition-colors text-sm"
+                        title="Pull"
+                        className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded bg-blue-600/40 hover:bg-blue-600/60 text-white disabled:opacity-50 transition-colors text-sm"
                     >
-                        <DownloadCloud size={14} /> Pull
+                        <DownloadCloud size={14} /> <span className="hidden sm:inline">Pull</span>
                         {status?.behind ? <span className="bg-white/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{status.behind}</span> : null}
                     </button>
                     <button
                         onClick={() => gitPush(defaultRemote, status?.branch || 'main')}
                         disabled={loading || !status?.branch}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-green-600/40 hover:bg-green-600/60 text-white disabled:opacity-50 transition-colors text-sm"
+                        title="Push"
+                        className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded bg-green-600/40 hover:bg-green-600/60 text-white disabled:opacity-50 transition-colors text-sm"
                     >
-                        <UploadCloud size={14} /> Push
+                        <UploadCloud size={14} /> <span className="hidden sm:inline">Push</span>
                         {status?.ahead ? <span className="bg-white/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{status.ahead}</span> : null}
                     </button>
                 </div>
@@ -394,7 +396,7 @@ export default function GitView() {
                     </div>
 
                     {/* Changes */}
-                    <div className="bg-white/5 border border-white/10 rounded-xl flex flex-col min-h-0 flex-1">
+                    <div className="bg-white/5 border border-white/10 rounded-xl flex flex-col shrink-0 overflow-hidden">
                         <div className="px-4 pt-4 pb-2 shrink-0">
                             <h3 className="text-xs font-semibold text-white/60 flex items-center gap-2 uppercase tracking-wide">
                                 <CheckCircle2 size={13} /> Changes
@@ -404,7 +406,7 @@ export default function GitView() {
                             </h3>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto px-3 pb-2 space-y-4 no-scrollbar min-h-0">
+                        <div className="max-h-[22vh] overflow-y-auto px-3 pb-2 space-y-4 no-scrollbar">
                             {/* Conflicts */}
                             {conflictCount > 0 && (
                                 <div>

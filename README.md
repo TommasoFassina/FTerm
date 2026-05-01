@@ -242,33 +242,40 @@ interface FTermPlugin {
 }
 ```
 
-### Example: Git branch in prompt banner
+### Example: Git branch banner on `cd`
 
-Watches PTY output for directory changes and prints the current git branch as a styled banner whenever you `cd` into a git repo.
+Watches OSC 7 CWD notifications (emitted by FTerm's PowerShell and cmd prompt functions on every prompt redraw) and prints the current git branch whenever you enter a repo.
+
+> **OSC 7 availability:** emitted automatically by FTerm for PowerShell and cmd. Bash/WSL/fish do not emit OSC 7 unless you add `printf '\e]7;file://%s%s\a' "$HOSTNAME" "$PWD"` to your prompt.
 
 ```js
 {
   id: 'git-branch-banner',
   name: 'Git Branch Banner',
-  description: 'Shows current git branch when entering a repo',
+  description: 'Shows current git branch when you cd into a repo',
   version: '1.0.0',
 
   onPtyData: (data) => {
-    // detect OSC 7 CWD changes (FTerm emits these natively)
-    if (data.includes('\x1b]7;')) {
-      const match = data.match(/\x1b\]7;file:\/\/[^/]*(\/.+?)(?:\x07|\x1b\\)/)
-      if (!match) return
-      // branch name via a side-channel is not available in renderer,
-      // but you can parse it from subsequent prompt output
-    }
-  },
+    // OSC 7 carries the new CWD on every prompt redraw
+    const match = data.match(/\x1b\]7;file:\/\/[^/]*(\/.+?)(?:\x07|\x1b\\)/)
+    if (!match) return
+    let cwd = decodeURIComponent(match[1])
+    // Windows paths arrive as /C:/Users/... — strip leading slash
+    if (/^\/[A-Za-z]:/.test(cwd)) cwd = cwd.slice(1)
 
-  onTerminalReady: (term, instanceId) => {
-    // inject a welcome banner on every new terminal
-    term.writeln('\x1b[38;5;99m  FTerm git-branch-banner active\x1b[0m')
+    // Ask FTerm's git service for the branch (returns null outside a repo)
+    window.fterm.git.status(cwd).then(status => {
+      if (!status?.branch) return
+      // Find the terminal that triggered this OSC 7 and write to it
+      // (all terminals share onPtyData, so we write to the focused one)
+      const term = window.__ftermActiveTerminal
+      if (term) term.writeln('\x1b[38;5;99m   ' + status.branch + '\x1b[0m')
+    }).catch(() => {})
   }
 }
 ```
+
+> `window.__ftermActiveTerminal` is set by FTerm whenever a terminal pane gains focus. It gives plugins a reference to the currently active xterm instance without needing to track `instanceId` manually.
 
 ### Example: Error sound alert
 
