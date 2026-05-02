@@ -106,7 +106,7 @@ $logoArt = @(
     "${C}${B}  ╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝${R}"
 )
 $logoWidth = visLen $logoArt[0]   # measure visual width from first line
-$tagline   = "${C2}  ── The AI-Powered Terminal  ${P}v0.1.0  ${D}↑ ${Wh}${upStr}${R}"
+$tagline   = "${C2}  ── The AI-Powered Terminal  ${P}v0.1.1  ${D}↑ ${Wh}${upStr}${R}"
 
 [Console]::WriteLine('')
 
