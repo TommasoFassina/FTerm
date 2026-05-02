@@ -404,6 +404,9 @@ function AITab() {
         />
       </Section>
 
+      {/* Claude CLI Statusline */}
+      <ClaudeStatuslineSection />
+
       {/* Quick actions */}
       <QuickActionsEditor />
     </div>
@@ -501,6 +504,189 @@ function QuickActionsEditor() {
           </button>
         )}
       </div>
+    </Section>
+  )
+}
+
+const PRESET_STATUSLINE_COMMANDS = [
+  { label: 'Caveman badge', command: 'powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\\.claude\\plugins\\cache\\caveman\\caveman\\84cc3c14fa1e\\hooks\\caveman-statusline.ps1"' },
+  { label: 'Git branch', command: 'git -C %CD% rev-parse --abbrev-ref HEAD 2>nul' },
+  { label: 'Node version', command: 'node --version' },
+]
+
+function ClaudeStatuslineSection() {
+  const { settings, setSettings } = useStore()
+  const cfg = settings.claudeStatusline ?? { enabled: false, command: '', pollInterval: 3000 }
+  const [showGuide, setShowGuide] = useState(false)
+  const [guideStep, setGuideStep] = useState(0)
+  const [settingsJson, setSettingsJson] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle')
+  const [testOutput, setTestOutput] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+
+  const update = (patch: Partial<typeof cfg>) =>
+    setSettings({ claudeStatusline: { ...cfg, ...patch } })
+
+  async function openGuide() {
+    setGuideStep(0)
+    setShowGuide(true)
+    try {
+      const homedir = window.fterm.homedir
+      const path = `${homedir}\\.claude\\settings.json`
+      const text = await window.fterm.fsReadFile(path)
+      setSettingsJson(text)
+    } catch {
+      setSettingsJson('{}')
+    }
+  }
+
+  async function saveToClaudeSettings() {
+    setSaveStatus('saving')
+    try {
+      let parsed: Record<string, any> = {}
+      try { parsed = JSON.parse(settingsJson) } catch { /* use empty */ }
+      parsed.statusLine = { type: 'command', command: cfg.command }
+      const homedir = window.fterm.homedir
+      const path = `${homedir}\\.claude\\settings.json`
+      await window.fterm.fsWriteFile(path, JSON.stringify(parsed, null, 2))
+      setSaveStatus('ok')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } catch {
+      setSaveStatus('error')
+      setTimeout(() => setSaveStatus('idle'), 3000)
+    }
+  }
+
+  async function testCommand() {
+    if (!cfg.command) return
+    setTesting(true)
+    setTestOutput(null)
+    try {
+      const out = await window.fterm.shellExec(cfg.command)
+      setTestOutput(out || '(empty output)')
+    } catch (e: any) {
+      setTestOutput(`Error: ${e.message}`)
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Section title="Claude CLI Statusline">
+      <p className="text-xs text-[#6e7681] mb-3">
+        Show a custom statusline from Claude CLI in FTerm's status bar. Polls a shell command and displays the output.
+      </p>
+      <Row label="Enable">
+        <Toggle value={cfg.enabled} onChange={v => update({ enabled: v })} />
+      </Row>
+
+      {cfg.enabled && (
+        <>
+          <div className="mt-3 flex flex-col gap-2">
+            <label className="text-xs text-[#6e7681]">Command</label>
+            <input
+              value={cfg.command}
+              onChange={e => update({ command: e.target.value })}
+              placeholder="e.g. powershell -File statusline.ps1"
+              className="input w-full font-mono text-xs"
+            />
+            <div className="flex flex-wrap gap-1">
+              {PRESET_STATUSLINE_COMMANDS.map(p => (
+                <button
+                  key={p.label}
+                  onClick={() => update({ command: p.command })}
+                  className="px-2 py-0.5 rounded text-[10px] border border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-1">
+            <label className="text-xs text-[#6e7681]">Poll interval (ms)</label>
+            <input
+              type="number"
+              value={cfg.pollInterval}
+              min={500}
+              max={30000}
+              step={500}
+              onChange={e => update({ pollInterval: Number(e.target.value) })}
+              className="input w-32"
+            />
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={testCommand}
+              disabled={!cfg.command || testing}
+              className="btn-secondary text-xs"
+            >
+              {testing ? 'Running…' : 'Test command'}
+            </button>
+            {testOutput !== null && (
+              <span className="text-xs font-mono text-[#58a6ff] truncate max-w-xs">{testOutput}</span>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={openGuide}
+          className="text-xs text-[#58a6ff] hover:text-[#79c0ff] underline underline-offset-2"
+        >
+          Setup guide: configure Claude CLI settings.json →
+        </button>
+      </div>
+
+      {showGuide && (
+        <div className="mt-4 border border-[#30363d] rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 bg-[#161b22] border-b border-[#30363d]">
+            <span className="text-xs font-medium text-white/80">Claude CLI Statusline Setup</span>
+            <button onClick={() => setShowGuide(false)} className="text-[#6e7681] hover:text-white text-xs">✕</button>
+          </div>
+
+          <div className="p-3 bg-[#0d1117]">
+            {guideStep === 0 && (
+              <div className="flex flex-col gap-3">
+                <p className="text-xs text-[#c9d1d9]">
+                  Claude CLI reads <code className="bg-white/10 px-1 rounded font-mono text-[11px]">~/.claude/settings.json</code> and runs the <code className="bg-white/10 px-1 rounded font-mono text-[11px]">statusLine.command</code> to display a statusline inside Claude's interactive session.
+                </p>
+                <p className="text-xs text-[#6e7681]">Step 1: Enter your statusline command above, then click below to write it to your Claude CLI settings.</p>
+                <div className="rounded border border-[#30363d] bg-[#161b22] p-2 font-mono text-[11px] text-[#8b949e] whitespace-pre-wrap max-h-32 overflow-auto">
+                  {settingsJson || '{}'}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={saveToClaudeSettings}
+                    disabled={!cfg.command || saveStatus === 'saving'}
+                    className="btn-primary text-xs"
+                  >
+                    {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'ok' ? 'Saved ✓' : saveStatus === 'error' ? 'Error ✗' : 'Write to settings.json'}
+                  </button>
+                  <button onClick={() => setGuideStep(1)} className="btn-secondary text-xs">Next →</button>
+                </div>
+              </div>
+            )}
+
+            {guideStep === 1 && (
+              <div className="flex flex-col gap-3">
+                <p className="text-xs text-[#c9d1d9] font-medium">Step 2: Verify in Claude CLI</p>
+                <p className="text-xs text-[#6e7681]">Open Claude CLI in a terminal and start an interactive session. The statusline output will appear at the bottom of the Claude session. FTerm also polls the same command and shows output in its own status bar below.</p>
+                <div className="rounded border border-[#30363d] bg-[#161b22] p-2 font-mono text-[11px] text-[#58a6ff]">
+                  claude
+                </div>
+                <p className="text-xs text-[#6e7681]">To create a custom statusline script, save a PowerShell or shell script that outputs a single line of text. Use the "Command" field above to point to it.</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setGuideStep(0)} className="btn-secondary text-xs">← Back</button>
+                  <button onClick={() => setShowGuide(false)} className="btn-primary text-xs">Done</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </Section>
   )
 }
@@ -989,29 +1175,282 @@ function StatusDot({ connected, testing }: { connected?: boolean; testing?: bool
 
 // ``` Stats tab ```````````````````
 
+function ActivityHeatmap({ activityLog }: { activityLog: Record<string, { commands: number; errors: number; sessions: number }> }) {
+  const WEEKS = 53
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  // Build grid: columns = weeks (oldest left), rows = days (Sun top)
+  const startDay = new Date(today)
+  startDay.setDate(today.getDate() - (WEEKS * 7 - 1))
+
+  const cells: Array<{ date: string; commands: number; errors: number }> = []
+  for (let i = 0; i < WEEKS * 7; i++) {
+    const d = new Date(startDay)
+    d.setDate(startDay.getDate() + i)
+    const key = d.toISOString().slice(0, 10)
+    const act = activityLog[key]
+    cells.push({ date: key, commands: act?.commands ?? 0, errors: act?.errors ?? 0 })
+  }
+
+  const maxCmds = Math.max(1, ...cells.map(c => c.commands))
+
+  function cellColor(commands: number, errors: number): string {
+    if (commands === 0 && errors === 0) return 'bg-white/5'
+    if (errors > 0 && commands === 0) return 'bg-red-500/40'
+    const intensity = commands / maxCmds
+    if (intensity < 0.25) return 'bg-green-900/60'
+    if (intensity < 0.5)  return 'bg-green-700/70'
+    if (intensity < 0.75) return 'bg-green-500/80'
+    return 'bg-green-400'
+  }
+
+  const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const DAY_LABELS = ['S','M','T','W','T','F','S']
+
+  // Month label positions
+  const monthLabels: Array<{ col: number; label: string }> = []
+  for (let w = 0; w < WEEKS; w++) {
+    const cellIdx = w * 7
+    const d = new Date(startDay)
+    d.setDate(startDay.getDate() + cellIdx)
+    if (d.getDate() <= 7) {
+      monthLabels.push({ col: w, label: MONTH_LABELS[d.getMonth()] })
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      {/* Month labels */}
+      <div className="flex ml-5 text-[9px] text-white/30 font-mono" style={{ gap: 2 }}>
+        {Array.from({ length: WEEKS }, (_, w) => {
+          const ml = monthLabels.find(m => m.col === w)
+          return <div key={w} style={{ width: 10, minWidth: 10 }}>{ml ? ml.label : ''}</div>
+        })}
+      </div>
+      <div className="flex gap-1">
+        {/* Day labels */}
+        <div className="flex flex-col text-[9px] text-white/30 font-mono" style={{ gap: 2 }}>
+          {DAY_LABELS.map((d, i) => (
+            <div key={i} style={{ width: 10, height: 10, lineHeight: '10px' }}>{i % 2 === 1 ? d : ''}</div>
+          ))}
+        </div>
+        {/* Grid */}
+        <div className="flex" style={{ gap: 2 }}>
+          {Array.from({ length: WEEKS }, (_, w) => (
+            <div key={w} className="flex flex-col" style={{ gap: 2 }}>
+              {Array.from({ length: 7 }, (_, d) => {
+                const cell = cells[w * 7 + d]
+                if (!cell) return <div key={d} style={{ width: 10, height: 10 }} />
+                return (
+                  <div
+                    key={d}
+                    title={`${cell.date}: ${cell.commands} commands, ${cell.errors} errors`}
+                    style={{ width: 10, height: 10, borderRadius: 2 }}
+                    className={`${cellColor(cell.commands, cell.errors)} cursor-default`}
+                  />
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 text-[9px] text-white/30 ml-5 mt-0.5">
+        <span>Less</span>
+        {['bg-white/5','bg-green-900/60','bg-green-700/70','bg-green-500/80','bg-green-400'].map((c,i) => (
+          <div key={i} style={{ width: 10, height: 10, borderRadius: 2 }} className={c} />
+        ))}
+        <span>More</span>
+      </div>
+    </div>
+  )
+}
+
+function HourlyHistogram({ hourly }: { hourly: number[] }) {
+  const max = Math.max(1, ...hourly)
+  return (
+    <div className="flex items-end gap-px h-12">
+      {hourly.map((v, h) => (
+        <div key={h} className="flex-1 flex flex-col items-center gap-0.5" title={`${h}:00 — ${v} cmds`}>
+          <div
+            className="w-full bg-blue-500/60 rounded-sm"
+            style={{ height: `${Math.round((v / max) * 40)}px`, minHeight: v > 0 ? 2 : 0 }}
+          />
+          {h % 6 === 0 && <span className="text-[8px] text-white/20 font-mono">{h}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const FETCH_FIELD_LABELS: Record<string, string> = {
+  hostname: 'Host', os: 'OS', shell: 'Shell', cpu: 'CPU', memory: 'Memory',
+  uptime: 'Uptime', cwd: 'CWD', petLevel: 'Pet Level', aiProvider: 'AI Provider',
+  currentStreak: 'Streak', commandsRun: 'Commands Run',
+}
+
+function FtermfetchConfigSection() {
+  const { ftermfetchConfig, setFtermfetchConfig, setFetchFieldColor, reorderFetchField, toggleFetchField } = useStore()
+  const { fields, colorMode, fieldColors } = ftermfetchConfig
+
+  return (
+    <div className="flex flex-col gap-4 p-4 bg-white/5 border border-white/10 rounded-lg">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-white/90 text-sm">ftermfetch Layout</h3>
+        <div className="flex items-center gap-1 text-[10px]">
+          <button
+            onClick={() => setFtermfetchConfig({ colorMode: 'theme' })}
+            className={`px-2 py-0.5 rounded transition-colors ${colorMode === 'theme' ? 'bg-blue-500/30 text-blue-300' : 'text-white/40 hover:text-white/60'}`}
+          >Theme</button>
+          <button
+            onClick={() => setFtermfetchConfig({ colorMode: 'custom' })}
+            className={`px-2 py-0.5 rounded transition-colors ${colorMode === 'custom' ? 'bg-blue-500/30 text-blue-300' : 'text-white/40 hover:text-white/60'}`}
+          >Custom</button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {fields.map((field, idx) => (
+          <div key={field.id} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-white/5">
+            {/* Enable toggle */}
+            <button
+              onClick={() => toggleFetchField(field.id)}
+              className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${field.enabled ? 'bg-blue-500/60 border-blue-500' : 'border-white/20'}`}
+            >
+              {field.enabled && <span className="text-[8px] text-white">✓</span>}
+            </button>
+
+            <span className={`flex-1 text-xs ${field.enabled ? 'text-white/80' : 'text-white/30'}`}>
+              {FETCH_FIELD_LABELS[field.id] ?? field.id}
+            </span>
+
+            {/* Custom color picker */}
+            {colorMode === 'custom' && field.enabled && (
+              <input
+                type="color"
+                value={fieldColors[field.id] ?? '#58a6ff'}
+                onChange={e => setFetchFieldColor(field.id, e.target.value)}
+                className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
+                title={`Color for ${FETCH_FIELD_LABELS[field.id]}`}
+              />
+            )}
+
+            {/* Reorder */}
+            <button
+              onClick={() => reorderFetchField(field.id, 'up')}
+              disabled={idx === 0}
+              className="text-white/30 hover:text-white/60 disabled:opacity-20 transition-colors"
+            >▲</button>
+            <button
+              onClick={() => reorderFetchField(field.id, 'down')}
+              disabled={idx === fields.length - 1}
+              className="text-white/30 hover:text-white/60 disabled:opacity-20 transition-colors"
+            >▼</button>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-white/30 text-[10px]">Type <code className="bg-white/10 px-1 rounded">ftermfetch</code> in terminal to open the fetch card.</p>
+    </div>
+  )
+}
+
 function StatsTab() {
   const usage = useStore(state => state.usage)
+  const terminalStats = useStore(state => state.terminalStats)
   const providers = Object.keys(usage) as AIProvider[]
+
+  const totalCmds = Object.values(terminalStats.activityLog).reduce((s, d) => s + d.commands, 0)
+  const totalErrors = terminalStats.totalErrors
+  const errorRate = totalCmds > 0 ? ((totalErrors / totalCmds) * 100).toFixed(1) : '0.0'
+
+  const topCommands = Object.entries(terminalStats.commandFrequency)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 8)
+
+  const hasActivity = totalCmds > 0
 
   return (
     <div className="flex flex-col gap-6 w-full text-xs">
-      <div className="flex flex-col gap-2">
-        <h3 className="font-semibold text-white/90 text-sm">AI Usage Statistics</h3>
-        <p className="text-white/50 text-xs">
-          Usage statistics are recorded locally on your machine and are based strictly on token counts returned by the AI provider's APIs.
-        </p>
+
+      {/* Heatmap */}
+      <div className="flex flex-col gap-3 p-4 bg-white/5 border border-white/10 rounded-lg">
+        <h3 className="font-semibold text-white/90 text-sm">Activity Heatmap</h3>
+        <ActivityHeatmap activityLog={terminalStats.activityLog} />
       </div>
 
-      <div className="flex flex-col gap-4">
+      {/* Streaks + summary */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1 p-4 bg-white/5 border border-white/10 rounded-lg">
+          <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Current Streak</span>
+          <span className="text-3xl font-bold text-green-400 font-mono">{terminalStats.currentStreak}</span>
+          <span className="text-white/40">days</span>
+        </div>
+        <div className="flex flex-col gap-1 p-4 bg-white/5 border border-white/10 rounded-lg">
+          <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Longest Streak</span>
+          <span className="text-3xl font-bold text-yellow-400 font-mono">{terminalStats.longestStreak}</span>
+          <span className="text-white/40">days</span>
+        </div>
+        <div className="flex flex-col gap-1 p-4 bg-white/5 border border-white/10 rounded-lg">
+          <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Commands Run</span>
+          <span className="text-3xl font-bold text-blue-400 font-mono">{totalCmds.toLocaleString()}</span>
+          <span className="text-white/40">all time</span>
+        </div>
+        <div className="flex flex-col gap-1 p-4 bg-white/5 border border-white/10 rounded-lg">
+          <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Error Rate</span>
+          <span className="text-3xl font-bold text-red-400 font-mono">{errorRate}%</span>
+          <span className="text-white/40">{totalErrors} errors</span>
+        </div>
+      </div>
+
+      {/* Busiest hours */}
+      <div className="flex flex-col gap-3 p-4 bg-white/5 border border-white/10 rounded-lg">
+        <h3 className="font-semibold text-white/90 text-sm">Busiest Hours</h3>
+        <HourlyHistogram hourly={terminalStats.hourlyActivity} />
+      </div>
+
+      {/* Top commands */}
+      {topCommands.length > 0 && (
+        <div className="flex flex-col gap-3 p-4 bg-white/5 border border-white/10 rounded-lg">
+          <h3 className="font-semibold text-white/90 text-sm">Most Used Commands</h3>
+          <div className="flex flex-col gap-1">
+            {topCommands.map(([cmd, count], i) => {
+              const pct = Math.round((count / (topCommands[0][1] || 1)) * 100)
+              return (
+                <div key={cmd} className="flex items-center gap-2">
+                  <span className="text-white/30 w-4 text-right font-mono">{i + 1}</span>
+                  <span className="text-white/70 font-mono w-28 truncate">{cmd}</span>
+                  <div className="flex-1 bg-white/5 rounded h-2 overflow-hidden">
+                    <div className="h-full bg-blue-500/60 rounded" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-white/40 font-mono w-10 text-right">{count}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {!hasActivity && (
+        <div className="text-white/40 italic p-4 bg-white/5 rounded-lg text-center">
+          Run some commands to start tracking activity!
+        </div>
+      )}
+
+      {/* ftermfetch config */}
+      <FtermfetchConfigSection />
+
+      {/* AI Usage */}
+      <div className="flex flex-col gap-3">
+        <h3 className="font-semibold text-white/90 text-sm">AI Usage</h3>
+        <p className="text-white/50 text-xs">
+          Recorded locally, based on token counts from AI provider APIs.
+        </p>
         {providers.map(provider => {
           const stats = usage[provider]
           if (!stats) return null
-
-          const totalTokens = (stats.sessionInput || 0) + (stats.sessionOutput || 0)
-          const hasUsage = totalTokens > 0 || (stats.dayInput || 0) > 0 || (stats.weekInput || 0) > 0
-
+          const hasUsage = (stats.sessionInput || 0) + (stats.sessionOutput || 0) + (stats.dayInput || 0) + (stats.weekInput || 0) > 0
           if (!hasUsage) return null
-
           return (
             <div key={provider} className="flex flex-col gap-3 p-4 bg-white/5 border border-white/10 rounded-lg">
               <div className="flex items-center justify-between border-b border-white/10 pb-2">
@@ -1022,7 +1461,6 @@ function StatsTab() {
                   </span>
                 )}
               </div>
-
               <div className="grid grid-cols-2 gap-6 mt-1">
                 <div className="flex flex-col gap-2">
                   <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Current Session</span>
@@ -1035,15 +1473,14 @@ function StatsTab() {
                     <span className="text-green-400 font-mono text-sm">{(stats.sessionOutput || 0).toLocaleString()}</span>
                   </div>
                 </div>
-
                 <div className="flex flex-col gap-2">
-                  <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Historical Overview</span>
+                  <span className="text-white/40 text-[10px] uppercase tracking-wider font-semibold">Historical</span>
                   <div className="flex justify-between items-center bg-black/20 p-2 rounded">
-                    <span className="text-white/60" title="Today's total tokens (In + Out)">Today</span>
+                    <span className="text-white/60">Today</span>
                     <span className="text-blue-400/80 font-mono text-sm">{((stats.dayInput || 0) + (stats.dayOutput || 0)).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between items-center bg-black/20 p-2 rounded">
-                    <span className="text-white/60" title="This week's total tokens (In + Out)">Week</span>
+                    <span className="text-white/60">Week</span>
                     <span className="text-blue-400/80 font-mono text-sm">{((stats.weekInput || 0) + (stats.weekOutput || 0)).toLocaleString()}</span>
                   </div>
                 </div>
@@ -1051,9 +1488,11 @@ function StatsTab() {
             </div>
           )
         })}
-        {Object.values(usage).every(s => (s.sessionInput || 0) + (s.sessionOutput || 0) + (s.dayInput || 0) + (s.weekInput || 0) === 0) && (
+        {providers.every(p => {
+          const s = usage[p]; return !s || (s.sessionInput||0)+(s.sessionOutput||0)+(s.dayInput||0)+(s.weekInput||0) === 0
+        }) && (
           <div className="text-white/40 italic p-4 bg-white/5 rounded-lg text-center">
-            No usage recorded yet. Start chatting with an AI model!
+            No AI usage yet. Start chatting!
           </div>
         )}
       </div>

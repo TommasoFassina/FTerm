@@ -59,6 +59,26 @@ export interface PetStats {
   linesWritten?: number
 }
 
+export interface DailyActivity {
+  commands: number
+  errors: number
+  sessions: number
+}
+
+export interface TerminalStats {
+  /** YYYY-MM-DD → daily activity; kept for last 400 days */
+  activityLog: Record<string, DailyActivity>
+  currentStreak: number
+  longestStreak: number
+  /** base command string → total run count */
+  commandFrequency: Record<string, number>
+  /** 24 buckets indexed by hour (0–23) */
+  hourlyActivity: number[]
+  totalErrors: number
+  /** ISO date of last recorded session */
+  lastSessionDate: string
+}
+
 export interface PetConfig {
   type: PetType
   name: string
@@ -134,6 +154,24 @@ export interface ProviderUsage {
 /** Effort level maps to model defaults (Claude-centric concept, generalized) */
 export type EffortLevel = 'fast' | 'auto' | 'thorough'
 
+export type FetchFieldId =
+  | 'hostname' | 'os' | 'shell' | 'cpu' | 'memory'
+  | 'uptime' | 'cwd' | 'petLevel' | 'aiProvider'
+  | 'currentStreak' | 'commandsRun'
+
+export interface FetchFieldConfig {
+  id: FetchFieldId
+  enabled: boolean
+}
+
+export interface FtermfetchConfig {
+  fields: FetchFieldConfig[]
+  /** 'theme' = derive from active FTerm theme; 'custom' = per-field hex colors */
+  colorMode: 'theme' | 'custom'
+  /** field id → hex color string (used when colorMode === 'custom') */
+  fieldColors: Partial<Record<FetchFieldId, string>>
+}
+
 export interface AppSettings {
   fontSize: number
   fontFamily: string
@@ -164,6 +202,11 @@ export interface AppSettings {
     afternoon: string // 12:00–18:00
     evening: string   // 18:00–22:00
     night: string     // 22:00–06:00
+  }
+  claudeStatusline?: {
+    enabled: boolean
+    command: string
+    pollInterval: number  // ms, default 3000
   }
 }
 

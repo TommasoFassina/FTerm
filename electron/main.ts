@@ -686,6 +686,17 @@ ipcMain.handle('fs:writeTmp', (_e, filename: string, content: string) => {
   return filePath
 })
 
+// ─── Shell exec (statusline polling, etc.) ───────────────────────────────────
+
+ipcMain.handle('shell:exec', async (_e, command: string) => {
+  if (typeof command !== 'string' || command.length === 0 || command.length > 2048) {
+    throw new Error('Invalid command')
+  }
+  const { stdout } = await execAsync(command, { timeout: 5000, windowsHide: true })
+  // Strip ANSI escapes from output before returning to renderer
+  return stdout.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b./g, '').trim()
+})
+
 // ─── Shell detection IPC ──────────────────────────────────────────────────────
 
 ipcMain.handle('shell:detect', async () => {
@@ -736,6 +747,7 @@ ipcMain.handle('recording:stop', async (event, data: {
   snapshots: any[]
   events: any[]
   theme: any
+  fontFamily?: string
   backgroundImage?: string
   backgroundBlur?: number
   backgroundOpacity?: number
@@ -753,6 +765,7 @@ ipcMain.handle('recording:stop', async (event, data: {
       width: 1200,
       height: 800,
       theme: data.theme,
+      fontFamily: data.fontFamily,
       backgroundImage: data.backgroundImage,
       backgroundBlur: data.backgroundBlur,
       backgroundOpacity: data.backgroundOpacity,

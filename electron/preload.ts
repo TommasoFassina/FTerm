@@ -153,6 +153,7 @@ contextBridge.exposeInMainWorld('fterm', {
   pingHost: (host: string, count?: number) => ipcRenderer.invoke('system:ping', host, count),
   portScan: (host: string, ports: number[]) => ipcRenderer.invoke('system:portscan', host, ports),
   shellDetect: () => ipcRenderer.invoke('shell:detect'),
+  shellExec: (command: string) => ipcRenderer.invoke('shell:exec', command),
   fsTempWrite: (filename: string, content: string): Promise<string> =>
     ipcRenderer.invoke('fs:writeTmp', filename, content),
   fsOpenDialog: (): Promise<string | null> =>

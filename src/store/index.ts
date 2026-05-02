@@ -4,7 +4,9 @@ import type {
   Tab, Theme, PetConfig, AIConfig, AppSettings,
   PetState, AIProvider, AIProviderStatus, ChatMessage,
   ProviderUsage, UsageData, SplitNode,
-  GitStatus, Branch, Commit, Remote
+  GitStatus, Branch, Commit, Remote,
+  TerminalStats, DailyActivity,
+  FtermfetchConfig, FetchFieldId,
 } from '@/types'
 
 // ─── Built-in themes ──────────────────────────────────────────────────────────
@@ -160,6 +162,17 @@ interface FTermState {
   // Usage tracking
   usage: Partial<Record<AIProvider, ProviderUsage>>
   recordUsage: (data: UsageData) => void
+
+  // Terminal activity stats
+  terminalStats: TerminalStats
+  recordTerminalError: () => void
+
+  // ftermfetch customization
+  ftermfetchConfig: FtermfetchConfig
+  setFtermfetchConfig: (updates: Partial<FtermfetchConfig>) => void
+  setFetchFieldColor: (id: FetchFieldId, color: string) => void
+  reorderFetchField: (id: FetchFieldId, direction: 'up' | 'down') => void
+  toggleFetchField: (id: FetchFieldId) => void
 
   // Settings
   settings: AppSettings
@@ -342,6 +355,69 @@ function getWeekStart(): string {
 
 function getDayStart(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+function extractBaseCommand(raw: string): string {
+  return raw.trim().split(/\s+/)[0].replace(/^[>$#]+/, '').toLowerCase() || raw.trim()
+}
+
+function computeStreaks(log: Record<string, DailyActivity>): { current: number; longest: number } {
+  const dates = Object.keys(log).filter(d => log[d].commands > 0 || log[d].sessions > 0).sort()
+  if (dates.length === 0) return { current: 0, longest: 0 }
+
+  let longest = 1, current = 1
+  for (let i = 1; i < dates.length; i++) {
+    const prev = new Date(dates[i - 1])
+    const curr = new Date(dates[i])
+    const diff = (curr.getTime() - prev.getTime()) / 86400000
+    if (diff === 1) {
+      current++
+      if (current > longest) longest = current
+    } else {
+      current = 1
+    }
+  }
+
+  // Check if streak reaches today
+  const today = getDayStart()
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  const lastDate = dates[dates.length - 1]
+  if (lastDate !== today && lastDate !== yesterday) current = 0
+
+  return { current, longest }
+}
+
+function pruneActivityLog(log: Record<string, DailyActivity>): Record<string, DailyActivity> {
+  const cutoff = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10)
+  return Object.fromEntries(Object.entries(log).filter(([d]) => d >= cutoff))
+}
+
+const DEFAULT_FTERMFETCH_CONFIG: FtermfetchConfig = {
+  fields: [
+    { id: 'hostname',      enabled: true },
+    { id: 'os',           enabled: true },
+    { id: 'shell',        enabled: true },
+    { id: 'cpu',          enabled: true },
+    { id: 'memory',       enabled: true },
+    { id: 'uptime',       enabled: true },
+    { id: 'cwd',          enabled: true },
+    { id: 'petLevel',     enabled: true },
+    { id: 'aiProvider',   enabled: true },
+    { id: 'currentStreak',enabled: true },
+    { id: 'commandsRun',  enabled: true },
+  ],
+  colorMode: 'theme',
+  fieldColors: {},
+}
+
+const DEFAULT_TERMINAL_STATS: TerminalStats = {
+  activityLog: {},
+  currentStreak: 0,
+  longestStreak: 0,
+  commandFrequency: {},
+  hourlyActivity: Array(24).fill(0),
+  totalErrors: 0,
+  lastSessionDate: '',
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -731,11 +807,38 @@ export const useStore = create<FTermState>()(
       commandHistory: [],
       addCommandHistory: (command) => set(s => {
         const { newXp, newLevel, newMaxXp } = applyXp(s.pet.xp, s.pet.level, s.pet.maxXp, 15)
-        const stats = { ...s.pet.stats, commandsRun: (s.pet.stats?.commandsRun || 0) + 1 }
+        const petStats = { ...s.pet.stats, commandsRun: (s.pet.stats?.commandsRun || 0) + 1 }
         const history = [...s.commandHistory, command].slice(-1000)
+
+        const today = getDayStart()
+        const ts = s.terminalStats
+        const prevDay = ts.activityLog[today] ?? { commands: 0, errors: 0, sessions: 0 }
+        const isNewSession = ts.lastSessionDate !== today
+        const updatedDay: DailyActivity = {
+          ...prevDay,
+          commands: prevDay.commands + 1,
+          sessions: isNewSession ? prevDay.sessions + 1 : prevDay.sessions,
+        }
+        const updatedLog = pruneActivityLog({ ...ts.activityLog, [today]: updatedDay })
+        const { current, longest } = computeStreaks(updatedLog)
+        const base = extractBaseCommand(command)
+        const freq = { ...ts.commandFrequency, [base]: (ts.commandFrequency[base] || 0) + 1 }
+        const hour = new Date().getHours()
+        const hourly = [...ts.hourlyActivity]
+        hourly[hour] = (hourly[hour] || 0) + 1
+
         return {
           commandHistory: history,
-          pet: { ...s.pet, xp: newXp, level: newLevel, maxXp: newMaxXp, stats },
+          pet: { ...s.pet, xp: newXp, level: newLevel, maxXp: newMaxXp, stats: petStats },
+          terminalStats: {
+            ...ts,
+            activityLog: updatedLog,
+            currentStreak: current,
+            longestStreak: Math.max(longest, ts.longestStreak),
+            commandFrequency: freq,
+            hourlyActivity: hourly,
+            lastSessionDate: today,
+          },
         }
       }),
       addChatMessage: (msg, explicitId?) => {
@@ -916,6 +1019,40 @@ export const useStore = create<FTermState>()(
         })
       },
 
+      // Terminal activity stats
+      terminalStats: { ...DEFAULT_TERMINAL_STATS },
+      recordTerminalError: () => set(s => {
+        const today = getDayStart()
+        const ts = s.terminalStats
+        const prevDay = ts.activityLog[today] ?? { commands: 0, errors: 0, sessions: 0 }
+        const updatedLog = { ...ts.activityLog, [today]: { ...prevDay, errors: prevDay.errors + 1 } }
+        return {
+          terminalStats: { ...ts, activityLog: updatedLog, totalErrors: ts.totalErrors + 1 },
+        }
+      }),
+
+      // ftermfetch customization
+      ftermfetchConfig: { ...DEFAULT_FTERMFETCH_CONFIG, fields: DEFAULT_FTERMFETCH_CONFIG.fields.map(f => ({ ...f })) },
+      setFtermfetchConfig: (updates) => set(s => ({ ftermfetchConfig: { ...s.ftermfetchConfig, ...updates } })),
+      setFetchFieldColor: (id, color) => set(s => ({
+        ftermfetchConfig: { ...s.ftermfetchConfig, fieldColors: { ...s.ftermfetchConfig.fieldColors, [id]: color } }
+      })),
+      reorderFetchField: (id, direction) => set(s => {
+        const fields = [...s.ftermfetchConfig.fields]
+        const idx = fields.findIndex(f => f.id === id)
+        if (idx === -1) return s
+        const newIdx = direction === 'up' ? idx - 1 : idx + 1
+        if (newIdx < 0 || newIdx >= fields.length) return s
+        ;[fields[idx], fields[newIdx]] = [fields[newIdx], fields[idx]]
+        return { ftermfetchConfig: { ...s.ftermfetchConfig, fields } }
+      }),
+      toggleFetchField: (id) => set(s => ({
+        ftermfetchConfig: {
+          ...s.ftermfetchConfig,
+          fields: s.ftermfetchConfig.fields.map(f => f.id === id ? { ...f, enabled: !f.enabled } : f)
+        }
+      })),
+
       // Settings
       settings: {
         fontSize: 14,
@@ -993,6 +1130,19 @@ export const useStore = create<FTermState>()(
         savedLayouts: (persisted as any)?.savedLayouts ?? [],
         keybindings: { ...DEFAULT_KEYBINDINGS, ...(persisted as any)?.keybindings },
         remoteTerminal: { port: 7681, ...(persisted as any)?.remoteTerminal, enabled: false, pin: '', clients: 0 },
+        terminalStats: {
+          ...DEFAULT_TERMINAL_STATS,
+          ...(persisted as any)?.terminalStats,
+          hourlyActivity: (persisted as any)?.terminalStats?.hourlyActivity ?? Array(24).fill(0),
+        },
+        ftermfetchConfig: (() => {
+          const saved = (persisted as any)?.ftermfetchConfig
+          if (!saved) return { ...DEFAULT_FTERMFETCH_CONFIG, fields: DEFAULT_FTERMFETCH_CONFIG.fields.map(f => ({ ...f })) }
+          // Merge: add any new fields from defaults that aren't in saved, preserve order of saved
+          const savedIds = new Set(saved.fields?.map((f: any) => f.id) ?? [])
+          const newFields = DEFAULT_FTERMFETCH_CONFIG.fields.filter(f => !savedIds.has(f.id))
+          return { ...DEFAULT_FTERMFETCH_CONFIG, ...saved, fields: [...(saved.fields ?? []), ...newFields] }
+        })(),
       })},
       partialize: (s) => ({
         activeThemeId: s.activeThemeId,
@@ -1024,6 +1174,8 @@ export const useStore = create<FTermState>()(
         savedLayouts: s.savedLayouts,
         keybindings: s.keybindings,
         remoteTerminal: { enabled: false, port: s.remoteTerminal.port, pin: '', clients: 0 },
+        terminalStats: s.terminalStats,
+        ftermfetchConfig: s.ftermfetchConfig,
         settings: { ...s.settings, settingsPanelOpen: false },
         // Persist day/week counters (session resets on restart)
         usage: Object.fromEntries(

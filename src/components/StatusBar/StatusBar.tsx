@@ -25,8 +25,10 @@ export default function StatusBar() {
   const setAIConfig = useStore(s => s.setAIConfig)
   const setSettings = useStore(s => s.setSettings)
   const setActiveView = useStore(s => s.setActiveView)
+  const claudeStatusline = useStore(s => s.settings.claudeStatusline)
   const activeCwd = tabs.find(t => t.id === activeTabId)?.currentCwd
   const [metrics, setMetrics] = useState({ cpu: 0, ram: 0 })
+  const [statuslineText, setStatuslineText] = useState<string | null>(null)
   const lastCpusRef = useRef<any[] | null>(null)
 
   useEffect(() => {
@@ -76,6 +78,25 @@ export default function StatusBar() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!claudeStatusline?.enabled || !claudeStatusline.command) {
+      setStatuslineText(null)
+      return
+    }
+    let unmounted = false
+    const poll = async () => {
+      try {
+        const out = await window.fterm.shellExec(claudeStatusline.command)
+        if (!unmounted) setStatuslineText(out || null)
+      } catch {
+        if (!unmounted) setStatuslineText(null)
+      }
+    }
+    poll()
+    const timer = setInterval(poll, claudeStatusline.pollInterval ?? 3000)
+    return () => { unmounted = true; clearInterval(timer) }
+  }, [claudeStatusline?.enabled, claudeStatusline?.command, claudeStatusline?.pollInterval])
+
   const provider = ai.provider
   const provUsage = provider !== 'none' ? usage[provider] : undefined
   const model = (provider === 'ollama' ? ai.ollamaModel : ai.model) || provUsage?.lastModel || ''
@@ -106,6 +127,14 @@ export default function StatusBar() {
               <Segment>
                 <span className="text-white/25">cwd</span>
                 <span className="text-white/50 font-mono">{truncateCwd(activeCwd)}</span>
+              </Segment>
+            </>
+          )}
+          {statuslineText && (
+            <>
+              <Divider />
+              <Segment>
+                <span className="text-[#58a6ff]/70 font-mono max-w-[240px] truncate">{statuslineText}</span>
               </Segment>
             </>
           )}
@@ -190,6 +219,15 @@ export default function StatusBar() {
             <Segment>
               <span className="text-white/25">cwd</span>
               <span className="text-white/50 font-mono">{truncateCwd(activeCwd)}</span>
+            </Segment>
+          </>
+        )}
+
+        {statuslineText && (
+          <>
+            <Divider />
+            <Segment>
+              <span className="text-[#58a6ff]/70 font-mono max-w-[240px] truncate">{statuslineText}</span>
             </Segment>
           </>
         )}

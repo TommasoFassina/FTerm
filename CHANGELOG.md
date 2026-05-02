@@ -2,6 +2,32 @@
 
 All notable changes to FTerm are documented here.
 
+## [Unreleased] — 2026-05-02
+
+### Fixed
+- **Recording — SGR sequences stripped after keep pass:** `stripNonSGR` step 5 (`.replace(/\x1b/g, '')`) ran after step 4 kept SGR sequences, stripping the `\x1b` from every `\x1b[39m` / `\x1b[0m` / `\x1b[38;2;…m` — leaving bare `[39m][0m]` as literal rendered text in every frame. Step 6's C0 range `\x0a-\x1f` also covered `\x1b` (0x1B). Fixed by removing the redundant step 5 and excluding `\x1b` from the C0 strip range (`\x0a-\x1a\x1c-\x1f`). Colors now render correctly in all recordings.
+- **Recording — box-drawing / block-element characters render as squares:** node-canvas was using only `Consolas` as the render font, which lacks Unicode block elements (`█▓▒░▊▌`), box-drawing chars (`╭╰│─`), and powerline symbols used by Claude CLI. Fixed by: (1) passing the user's terminal `fontFamily` setting through `recordingStop` IPC to the video composer; (2) `buildFontStack()` in `VideoComposer` merges user fonts with fallback chain `Cascadia Mono → Cascadia Code → Consolas → Segoe UI Symbol → Segoe UI Emoji → Courier New → DejaVu Sans Mono → monospace`; (3) `FrameRenderer.preload()` calls `registerFont()` for `seguisym.ttf`, `seguiemj.ttf`, `CascadiaMono.ttf`, and `CascadiaCode.ttf` from `C:\Windows\Fonts\` (skips any that are absent).
+- **Recording — pet sprite lines have visible gaps between rows:** pet was rendered using the terminal's `lineHeight` (~1.4 × fontSize) instead of the live component's `leading-tight` CSS (1.25 × fontSize), creating ~8 px transparent bands between each sprite row. Fixed by computing a separate `petLineHeight = Math.round(fontSize * 1.25)` for pet and name/bubble Y positions.
+
+## [Unreleased] — 2026-05-01
+
+### Added
+- **Activity heatmap** — 53-week × 7-day GitHub-style contribution grid in Settings → Stats. Green intensity = command volume; red tint = error-heavy days. Hover cells for date + counts.
+- **Session streaks** — current and longest consecutive active-day streaks tracked in the store and shown as big-number badges in the Stats panel.
+- **Terminal activity stats** — error rate (%), most-used commands bar chart (top 8), and busiest hours histogram (24 hourly buckets). All persisted to `localStorage`.
+- **`ftermfetch` React widget** — `ftermfetch` command now opens a modal overlay instead of running the PowerShell script. Renders the FTerm ASCII logo + configurable field list using live system data from IPC.
+- **ftermfetch layout editor** — Settings → Stats → "ftermfetch Layout" section. Toggle fields on/off and reorder with ▲/▼ buttons. Available fields: hostname, OS, shell, CPU, memory, uptime, CWD, pet level, AI provider, streak, commands run.
+- **ftermfetch color modes** — "Theme" derives accent colors from the active FTerm theme; "Custom" shows per-field hex color pickers.
+- **ftermfetch PNG export** — "export PNG" button in the widget captures the card via `captureRect` IPC and downloads `ftermfetch-YYYY-MM-DD.png`.
+- **Cross-platform shell functions** — `ptyManager` now writes `fterm_init.sh` (bash/zsh, includes OSC 7 + OSC 9998 prompt hooks + `ftermfetch` stub) and `fterm_init.fish` (fish equivalent). Bash/zsh use `--rcfile`; fish uses `--init-command source …`.
+
+### Fixed
+- **Recording — literal ANSI codes in video (`39m`, `0m`, etc.):** `stripNonSGR` in `FrameRenderer.ts` applied `\x1b./g` (ESC + any char) AFTER the SGR-keep pass. Since `.` matches `[`, every kept SGR sequence had its `\x1b[` prefix stripped, leaving `39m`, `0m`, `38;2;R;G;Bm` etc. as literal rendered text. Fixed by running the ESC-non-CSI strip (`\x1b[^\[]`) BEFORE the CSI pass, so `[` is never consumed accidentally.
+- **`stripNonSGR` — private-prefix SGR sequences kept incorrectly:** sequences like `\x1b[>1m` (DEC private) were passed through as SGR because the keep condition only checked `cmd === 'm'`. Now also requires no `?`/`!`/`>` prefix.
+- **`parseAnsiLine` — code 39 (default fg) not handled:** ANSI code 39 (reset foreground to default) fell through without action. Now resets `currentColor` to `theme.foreground` the same as code 0.
+- **ftermfetch ASCII art whitespace collapse:** logo lines in the widget lost internal spaces because `white-space` was not set. Fixed with `whiteSpace: 'pre'` on each logo line.
+- **ftermfetch memory bar glitch:** replaced Unicode block-character bar (`█░`) with a CSS `div` progress bar (green → yellow → red at 60 / 80 % thresholds) for pixel-correct rendering.
+
 ## [Unreleased] — 2026-04-28
 
 ### Security

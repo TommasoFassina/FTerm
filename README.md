@@ -138,7 +138,7 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `port-scan [host]` | Port Scanner — scan open ports |
 | `ps` | Process Table — sortable process list |
 | `query [sql]` | Data Table — SQL-like queries on system data |
-| `ftermfetch` | System Info — neofetch-style summary |
+| `ftermfetch` | System Info — customizable neofetch-style card; export as PNG |
 | `snippets` | Snippets Manager — save and insert reusable commands |
 
 ---
@@ -341,16 +341,17 @@ Logs every command with a timestamp to `localStorage` — useful for building a 
 Planned features and ideas — contributions welcome.
 
 ### Stats & Activity
-- **GitHub-style workday heatmap** — visualize terminal activity (commands run, errors, sessions) as a contribution-style calendar grid
-- **Session streaks** — track consecutive active days; display current streak and longest streak in the Stats panel
-- **Accurate session stats** — per-command timing, error rate, most-used commands, busiest hours histogram
+- ✅ **GitHub-style workday heatmap** — 53-week × 7-day contribution grid in the Stats panel; hover for daily command/error counts
+- ✅ **Session streaks** — current streak and longest streak badges in the Stats panel
+- ✅ **Accurate session stats** — error rate, most-used commands bar chart, busiest hours histogram
 - **Fitbit / health sync** — correlate coding activity with sleep, steps, and heart rate from Fitbit or Apple Health; show "deep work" scores alongside health data
+- **Per-command timing** — average duration, slowest commands, p95 latency
 
 ### `ftermfetch` Customization
-- **Custom layout editor** — drag-and-drop which fields appear in the `ftermfetch` output (hostname, OS, shell, pet level, AI usage, uptime…)
-- **Color scheme picker** — choose accent colors per field, or match the active FTerm theme automatically
-- **Cross-platform shell alias** — proper `ftermfetch` shell function for bash/zsh/fish (currently Windows-only via `doskey`)
-- **Export as image** — save the `ftermfetch` card as a `.png` for sharing
+- ✅ **Custom layout editor** — toggle and reorder fields (hostname, OS, shell, pet level, AI usage, uptime, streak…) in Settings → Stats
+- ✅ **Color scheme picker** — theme-derived accent colors per field, or custom hex via color picker
+- ✅ **Cross-platform shell function** — bash, zsh, and fish init scripts (in addition to PowerShell and CMD)
+- ✅ **Export as PNG** — save the `ftermfetch` card directly from the widget
 
 ### AI & Workflow
 - **AI context memory** — let the AI sidebar remember project-specific facts across sessions (stored locally, never sent unless relevant)

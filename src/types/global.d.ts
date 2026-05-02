@@ -82,6 +82,7 @@ interface FTermAPI {
   pingHost: (host: string, count?: number) => Promise<{ host: string; rtts: number[]; lost: number; avg: number; min: number; max: number; count: number }>
   portScan: (host: string, ports: number[]) => Promise<{ port: number; open: boolean }[]>
   shellDetect: () => Promise<Array<{ id: string; name: string; shell: string; icon: string }>>
+  shellExec: (command: string) => Promise<string>
   fsTempWrite: (filename: string, content: string) => Promise<string>
   fsOpenDialog: () => Promise<string | null>
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]) => Promise<string | null>
@@ -95,7 +96,7 @@ interface FTermAPI {
   systemProcesses: () => Promise<(string | number)[][]>
 
   // Recording
-  recordingStop: (data: { snapshots: any[]; events: any[]; theme: any; backgroundImage?: string; backgroundBlur?: number; backgroundOpacity?: number; generateSubtitlesWith?: string }) => Promise<{ videoPath: string }>
+  recordingStop: (data: { snapshots: any[]; events: any[]; theme: any; fontFamily?: string; backgroundImage?: string; backgroundBlur?: number; backgroundOpacity?: number; generateSubtitlesWith?: string }) => Promise<{ videoPath: string }>
   onRecordingProgress: (cb: (percent: number) => void) => () => void
   captureRect: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
 

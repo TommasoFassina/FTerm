@@ -23,6 +23,7 @@ import PingWidget from '@/components/Widgets/PingWidget'
 import DataTableWidget from '@/components/Widgets/DataTableWidget'
 import PortScanWidget from '@/components/Widgets/PortScanWidget'
 import SnippetsWidget from '@/components/Widgets/SnippetsWidget'
+import FtermfetchWidget from '@/components/Widgets/FtermfetchWidget'
 import HistorySearch from './HistorySearch'
 import { searchAddons, terminalInstances } from './terminalRegistry'
 
@@ -68,6 +69,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const setAIConfig = useStore(s => s.setAIConfig)
   const setTabBell = useStore(s => s.setTabBell)
   const updateTabCwd = useStore(s => s.updateTabCwd)
+  const recordTerminalError = useStore(s => s.recordTerminalError)
   const currentProfile = profiles.find(p => p.id === profileId)
   const instanceId = `${tabId}-${paneId}`
 
@@ -322,6 +324,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         // cmdNotFound: CMD locale-agnostic text match
         // bufHasError: text match only when no prompt in this chunk (avoids false-positives from success output containing "error")
         if (exitCodeError || cmdNotFound || (!osc9998 && bufHasError)) {
+          recordTerminalError();
           const buffer = term.buffer.active;
           const currentLine = buffer.baseY + buffer.cursorY;
           if (lastErrorMarkerLine !== -1 && Math.abs(currentLine - lastErrorMarkerLine) < 4) {
@@ -710,10 +713,15 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         }
 
         if (input === 'ftermfetch') {
+          e.preventDefault()
+          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
+          window.fterm.ptyWrite(instanceId, backspaces)
+          setActiveWidget({ type: 'ftermfetch' })
+          window.fterm.ptyWrite(instanceId, '\r\n')
           currentInputRef.current = ''
           if (ac) updateAcUI(null)
           autocompleteRef.current = null
-          return true  // let xterm send \r naturally; shell runs ftermfetch via PATH
+          return false
         }
       }
 
@@ -1259,6 +1267,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             onClose={closeWidget}
             onRun={(cmd) => window.fterm.ptyWrite(instanceId, cmd + '\r')}
           />
+        )}
+        {activeWidget?.type === 'ftermfetch' && (
+          <FtermfetchWidget key="ftermfetch" onClose={closeWidget} />
         )}
       </AnimatePresence>
     </div>

@@ -1,4 +1,5 @@
-import { createCanvas, loadImage, Canvas, CanvasRenderingContext2D } from 'canvas'
+import { createCanvas, loadImage, registerFont, Canvas, CanvasRenderingContext2D } from 'canvas'
+import { existsSync } from 'fs'
 import type { FrameSnapshot } from '../../src/services/TerminalRecorder'
 
 export interface RenderOptions {
@@ -87,12 +88,26 @@ function boxBlur(ctx: CanvasRenderingContext2D, w: number, h: number, radius: nu
   ctx.putImageData(data, 0, 0)
 }
 
-// Strip all non-printable / ANSI sequences that aren't SGR color codes
+// Strip all non-printable / ANSI sequences that aren't SGR color codes.
+// Ordering matters: ESC-non-CSI sequences must be stripped BEFORE CSI handling,
+// otherwise the generic \x1b. pass eats the ESC+[ prefix of kept SGR sequences
+// leaving "39m" / "0m" as literal rendered text.
 function stripNonSGR(line: string): string {
-  // Remove all ESC sequences that are NOT ESC[...m (SGR)
-  return line.replace(/\x1b\[([0-9;]*)([A-Za-z])/g, (match, _params, cmd) => {
-    return cmd === 'm' ? match : ''
-  }).replace(/\x1b[^[]/g, '')  // ESC + single char (e.g. ESC= ESC>)
+  return line
+    // OSC sequences: ESC ] ... BEL  or  ESC ] ... ESC\
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // DCS sequences: ESC P ... ST
+    .replace(/\x1bP[^\x1b]*(?:\x1b\\)/g, '')
+    // ESC + single non-[ char (ESC= ESC> ESC7 ESC8 ESC( charset designators, etc.)
+    // Must run BEFORE the CSI pass so we don't accidentally eat \x1b[ prefixes.
+    .replace(/\x1b[^\[]/g, '')
+    // CSI sequences: ESC [ params letter — keep ONLY plain SGR (no private/intermediate prefix, letter = 'm')
+    .replace(/\x1b\[([?!>]?[0-9;:]*)([A-Za-z@`])/g, (_match, p, cmd) =>
+      (cmd === 'm' && !/^[?!>]/.test(p)) ? _match : '')
+    // Strip remaining C0 control chars except TAB (0x09) and ESC (0x1b).
+    // ESC must be preserved here — kept SGR sequences still contain \x1b[...m
+    // and stripping \x1b would leave bare "[39m]" / "[0m]" as literal text.
+    .replace(/[\x00-\x08\x0a-\x1a\x1c-\x1f\x7f]/g, '')
 }
 
 export class FrameRenderer {
@@ -108,6 +123,20 @@ export class FrameRenderer {
   }
 
   async preload(): Promise<void> {
+    // Register Windows symbol/emoji fonts so Pango can use them for block
+    // elements, box-drawing, and other Unicode that monospace fonts lack.
+    const winFonts: Array<{ path: string; family: string }> = [
+      { path: 'C:\\Windows\\Fonts\\seguisym.ttf',  family: 'Segoe UI Symbol' },
+      { path: 'C:\\Windows\\Fonts\\seguiemj.ttf',  family: 'Segoe UI Emoji' },
+      { path: 'C:\\Windows\\Fonts\\CascadiaMono.ttf', family: 'Cascadia Mono' },
+      { path: 'C:\\Windows\\Fonts\\CascadiaCode.ttf', family: 'Cascadia Code' },
+    ]
+    for (const { path, family } of winFonts) {
+      if (existsSync(path)) {
+        try { registerFont(path, { family }) } catch { /* skip unavailable */ }
+      }
+    }
+
     const { backgroundImage, backgroundBlur = 10, width, height } = this.options
     if (!backgroundImage) return
     try {
@@ -223,11 +252,13 @@ export class FrameRenderer {
       const maxLen = Math.max(...petLines.map(l => l.length))
       const petX = width - paddingX - maxLen * renderCharWidth
       const petBottom = height - 50
+      // Pet uses leading-tight (1.25) in the live component, not the terminal's ~1.4 lineHeight
+      const petLineHeight = Math.round(fontSize * 1.25)
       ctx.font = `${fontSize}px ${fontFamily}`
       ctx.fillStyle = snapshot.petColor
       ctx.globalAlpha = 0.9
       for (let i = 0; i < petLines.length; i++) {
-        const lineY = petBottom - (petLines.length - 1 - i) * lineHeight
+        const lineY = petBottom - (petLines.length - 1 - i) * petLineHeight
         ctx.fillText(petLines[i], petX, lineY)
       }
       ctx.globalAlpha = 1.0
@@ -238,7 +269,7 @@ export class FrameRenderer {
         ctx.font = `${nameFontSize}px ${fontFamily}`
         ctx.fillStyle = '#6e7681'
         ctx.globalAlpha = 0.85
-        const nameY = petBottom - petLines.length * lineHeight - 2
+        const nameY = petBottom - petLines.length * petLineHeight - 2
         const nameX = width - paddingX - ctx.measureText(snapshot.petName).width
         ctx.fillText(snapshot.petName, nameX, nameY)
         ctx.globalAlpha = 1.0
@@ -269,7 +300,7 @@ export class FrameRenderer {
         const bubbleW = Math.min(maxBubbleWidth, Math.max(...bubbleLines.map(l => ctx.measureText(l).width)) + padding * 2)
         const bubbleH = bubbleLines.length * bubbleLineH + padding * 2
         const bubbleX = petX + maxLen * renderCharWidth - bubbleW
-        const bubbleY = petBottom - petLines.length * lineHeight - bubbleH - 4
+        const bubbleY = petBottom - petLines.length * petLineHeight - bubbleH - 4
 
         ctx.globalAlpha = 0.92
         ctx.fillStyle = '#161b22'
@@ -352,7 +383,7 @@ function parseAnsiLine(line: string, theme: RenderOptions['theme']): TextSegment
       let j = 0
       while (j < codes.length) {
         const code = codes[j]
-        if (code === 0) {
+        if (code === 0 || code === 39) {
           currentColor = theme.foreground || '#c9d1d9'
         } else if (ANSI_COLORS[code]) {
           currentColor = theme[ANSI_COLORS[code]] || currentColor

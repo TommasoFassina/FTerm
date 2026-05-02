@@ -20,14 +20,26 @@ export interface ComposeOptions {
   width: number
   height: number
   theme: RenderOptions['theme']
+  fontFamily?: string
   backgroundImage?: string
   backgroundBlur?: number
   backgroundOpacity?: number
   onProgress?: (percent: number) => void
 }
 
+// Strip CSS quotes from font names and append Unicode fallbacks for box-drawing,
+// block elements, and symbols that Consolas/Courier New lack.
+function buildFontStack(userFont?: string): string {
+  const base = userFont
+    ? userFont.replace(/['"]/g, '').split(',').map(f => f.trim()).filter(Boolean)
+    : []
+  const fallbacks = ['Cascadia Mono', 'Cascadia Code', 'Consolas', 'Segoe UI Symbol', 'Segoe UI Emoji', 'Courier New', 'DejaVu Sans Mono', 'monospace']
+  const merged = [...new Set([...base, ...fallbacks])]
+  return merged.join(', ')
+}
+
 export async function composeVideo(options: ComposeOptions): Promise<void> {
-  const { snapshots, events, outputPath, fps, width, height, theme, backgroundImage, backgroundBlur, backgroundOpacity, onProgress } = options
+  const { snapshots, events, outputPath, fps, width, height, theme, fontFamily, backgroundImage, backgroundBlur, backgroundOpacity, onProgress } = options
 
   if (snapshots.length === 0) throw new Error('No snapshots to compose')
 
@@ -38,7 +50,7 @@ export async function composeVideo(options: ComposeOptions): Promise<void> {
     width,
     height,
     fontSize: 16,
-    fontFamily: 'Consolas',
+    fontFamily: buildFontStack(fontFamily),
     theme,
     backgroundImage,
     backgroundBlur: backgroundBlur ?? 10,

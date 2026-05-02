@@ -90,6 +90,7 @@ export default function RecordingControls({ terminal, widgetEl, containerEl }: P
         snapshots,
         events,
         theme: themeData,
+        fontFamily: settings.fontFamily,
         backgroundImage: settings.backgroundImage || undefined,
         backgroundBlur: settings.backgroundBlur ?? 10,
         backgroundOpacity: settings.opacity ?? 0.85,

@@ -39,6 +39,36 @@ function deployFtermFetch(): string {
       `prompt ${cmdPromptStr}`,
     ].join('\r\n') + '\r\n'
     writeFileSync(join(dir, 'fterm_init.bat'), initBat, 'ascii')
+
+    // Unix init script: OSC 7 CWD + OSC 9998 exit code + ftermfetch stub
+    // TerminalPane intercepts ftermfetch before PTY; stub prevents "command not found" as fallback
+    const unixInit = [
+      '# FTerm shell init',
+      '__fterm_prompt() {',
+      '  local s=$?',
+      '  printf "\\033]7;file://localhost${PWD}\\007"',
+      '  printf "\\033]9998;${s}\\007"',
+      '}',
+      'PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__fterm_prompt"',
+      'ftermfetch() { printf "\\033[1;34mftermfetch\\033[0m: running via FTerm widget\\n"; }',
+      'export -f ftermfetch 2>/dev/null || true',
+    ].join('\n') + '\n'
+    writeFileSync(join(dir, 'fterm_init.sh'), unixInit, 'utf8')
+
+    // Fish init snippet (written to a file; fish -C sources it)
+    const fishInit = [
+      'function __fterm_prompt',
+      '  printf "\\033]7;file://localhost$PWD\\007"',
+      'end',
+      'function __fterm_precmd --on-event fish_prompt',
+      '  __fterm_prompt',
+      'end',
+      'function ftermfetch',
+      '  printf "\\033[1;34mftermfetch\\033[0m: running via FTerm widget\\n"',
+      'end',
+    ].join('\n') + '\n'
+    writeFileSync(join(dir, 'fterm_init.fish'), fishInit, 'utf8')
+
     ftermfetchScriptPath = dest
   } catch {
     ftermfetchScriptPath = ''
@@ -87,6 +117,9 @@ export function createSession(
   const shellLower = shell.toLowerCase()
   const isPwsh = shellLower.includes('pwsh') || shellLower.includes('powershell')
   const isCmd = shellLower.includes('cmd.exe') || shellLower.includes('cmd')
+  const isBash = shellLower.includes('bash')
+  const isZsh = shellLower.includes('zsh')
+  const isFish = shellLower.includes('fish')
   const scriptPath = deployFtermFetch().replace(/\\/g, '\\\\')
   const ftermDir = join(app.getPath('appData'), 'fterm')
   const initBatPath = join(ftermDir, 'fterm_init.bat')
@@ -106,10 +139,16 @@ export function createSession(
     'try { Set-PSReadLineOption -Colors @{ InlinePrediction = ([char]27+[char]91+\'38;5;244m\') } -ErrorAction SilentlyContinue } catch {}',
   ].filter(Boolean).join('; ')
 
+  const unixInitPath = join(ftermDir, 'fterm_init.sh')
+  const fishInitPath = join(ftermDir, 'fterm_init.fish')
+
   const args = customArgs || (
     isPwsh ? ['-NoLogo', '-NoProfile', '-NoExit', '-Command', pwshInit] :
     isCmd  ? ['/k', initBatPath] :
-    /* unix */ []
+    isFish ? ['--init-command', `source ${fishInitPath}`] :
+    (isBash || isZsh) && existsSync(unixInitPath)
+           ? ['--rcfile', unixInitPath] :
+    /* other unix */ []
   )
 
   const ptyProcess = pty.spawn(shell, args, {
