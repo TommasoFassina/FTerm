@@ -21,6 +21,7 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 [![Release](https://img.shields.io/github/v/release/TommasoFassina/FTerm?include_prereleases&label=release)](https://github.com/TommasoFassina/FTerm/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/TommasoFassina/FTerm/releases)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+[![Github all releases](https://img.shields.io/github/downloads/TommasoFassina/FTerm/total.svg)](https://github.com/TommasoFassina/FTerm/releases/)
 
 </div>
 
