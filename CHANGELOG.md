@@ -2,7 +2,7 @@
 
 All notable changes to FTerm are documented here.
 
-## [Unreleased] — 2026-05-02
+## [0.1.1] — 2026-05-02
 
 ### Fixed
 - **Recording — SGR sequences stripped after keep pass:** `stripNonSGR` step 5 (`.replace(/\x1b/g, '')`) ran after step 4 kept SGR sequences, stripping the `\x1b` from every `\x1b[39m` / `\x1b[0m` / `\x1b[38;2;…m` — leaving bare `[39m][0m]` as literal rendered text in every frame. Step 6's C0 range `\x0a-\x1f` also covered `\x1b` (0x1B). Fixed by removing the redundant step 5 and excluding `\x1b` from the C0 strip range (`\x0a-\x1a\x1c-\x1f`). Colors now render correctly in all recordings.
