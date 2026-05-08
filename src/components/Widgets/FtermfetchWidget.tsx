@@ -18,27 +18,29 @@ const FTERM_LOGO = [
 ]
 
 const FIELD_LABELS: Record<FetchFieldId, string> = {
-  hostname:      'Host',
-  os:            'OS',
-  shell:         'Shell',
-  cpu:           'CPU',
-  memory:        'Memory',
-  uptime:        'Uptime',
-  cwd:           'CWD',
-  petLevel:      'Pet',
-  aiProvider:    'AI',
+  hostname: 'Host',
+  os: 'OS',
+  shell: 'Shell',
+  cpu: 'CPU',
+  memory: 'Memory',
+  uptime: 'Uptime',
+  cwd: 'CWD',
+  petLevel: 'Pet',
+  aiProvider: 'AI',
   currentStreak: 'Streak',
-  commandsRun:   'Commands',
+  commandsRun: 'Commands',
 }
 
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
   const parts = []
   if (d > 0) parts.push(`${d}d`)
   if (h > 0) parts.push(`${h}h`)
-  parts.push(`${m}m`)
+  if (m > 0 || d > 0 || h > 0) parts.push(`${m}m`)
+  if (parts.length === 0) parts.push(`${s}s`)
   return parts.join(' ')
 }
 
@@ -56,7 +58,8 @@ export default function FtermfetchWidget({ onClose }: Props) {
   const activeTabId = useStore(s => s.activeTabId)
 
   const cardRef = useRef<HTMLDivElement>(null)
-  const [sysInfo, setSysInfo] = useState<any>(null)
+  type SystemMetrics = Awaited<ReturnType<typeof window.fterm.getSystemMetrics>>
+  const [sysInfo, setSysInfo] = useState<SystemMetrics | null>(null)
   const [exporting, setExporting] = useState(false)
 
   const cwd = tabs.find(t => t.id === activeTabId)?.currentCwd ?? '~'
@@ -67,22 +70,23 @@ export default function FtermfetchWidget({ onClose }: Props) {
   }, [])
 
   const accentColor = (id: FetchFieldId): string => {
-    if (ftermfetchConfig.colorMode === 'custom' && ftermfetchConfig.fieldColors[id]) {
-      return ftermfetchConfig.fieldColors[id]!
+    if (ftermfetchConfig.colorMode === 'custom') {
+      const c = ftermfetchConfig.fieldColors[id]
+      if (c) return c
     }
     // Theme-derived: cycle through theme colors
     const palette: Record<FetchFieldId, string> = {
-      hostname:      theme.blue,
-      os:           theme.cyan,
-      shell:        theme.green,
-      cpu:          theme.yellow,
-      memory:       theme.magenta,
-      uptime:       theme.cyan,
-      cwd:          theme.blue,
-      petLevel:     theme.green,
-      aiProvider:   theme.magenta,
-      currentStreak:theme.yellow,
-      commandsRun:  theme.cyan,
+      hostname: theme.blue,
+      os: theme.cyan,
+      shell: theme.green,
+      cpu: theme.yellow,
+      memory: theme.magenta,
+      uptime: theme.cyan,
+      cwd: theme.blue,
+      petLevel: theme.green,
+      aiProvider: theme.magenta,
+      currentStreak: theme.yellow,
+      commandsRun: theme.cyan,
     }
     return palette[id] ?? theme.blue
   }
@@ -90,22 +94,22 @@ export default function FtermfetchWidget({ onClose }: Props) {
   const getFieldValue = useCallback((id: FetchFieldId): string => {
     if (!sysInfo) return '…'
     switch (id) {
-      case 'hostname':      return `${sysInfo.username}@${sysInfo.hostname}`
-      case 'os':           return `${sysInfo.platform === 'win32' ? 'Windows' : sysInfo.platform} ${sysInfo.release}`
-      case 'shell':        return sysInfo.platform === 'win32' ? 'PowerShell / CMD' : (process.env?.SHELL ?? 'bash')
-      case 'cpu':          return sysInfo.cpus?.[0]?.model?.replace(/\(R\)|Core\(TM\)|CPU @/g, '').trim() ?? 'Unknown'
+      case 'hostname': return `${sysInfo.username}@${sysInfo.hostname}`
+      case 'os': return `${sysInfo.platform === 'win32' ? 'Windows' : sysInfo.platform} ${sysInfo.release}`
+      case 'shell': return sysInfo.shell || (sysInfo.platform === 'win32' ? 'PowerShell / CMD' : 'bash')
+      case 'cpu': return sysInfo.cpus?.[0]?.model?.replace(/\(R\)|Core\(TM\)|CPU @/g, '').trim() ?? 'Unknown'
       case 'memory': {
         const used = sysInfo.totalMem - sysInfo.freeMem
         const pct = Math.round((used / sysInfo.totalMem) * 100)
         return `${formatBytes(used)} / ${formatBytes(sysInfo.totalMem)}  ${pct}%`
       }
-      case 'uptime':       return formatUptime(sysInfo.uptime)
-      case 'cwd':          return cwd.length > 48 ? '…' + cwd.slice(-47) : cwd
-      case 'petLevel':     return `${pet.name} (${pet.type}) — Lv.${pet.level} · ${pet.xp}/${pet.maxXp} XP`
-      case 'aiProvider':   return ai.provider === 'none' ? 'None' : `${ai.provider}${ai.model ? ` · ${ai.model}` : ''}`
-      case 'currentStreak':return `${terminalStats.currentStreak} days (best: ${terminalStats.longestStreak})`
-      case 'commandsRun':  return totalCmds.toLocaleString()
-      default:             return '?'
+      case 'uptime': return formatUptime(sysInfo.uptime)
+      case 'cwd': return cwd.length > 48 ? '…' + cwd.slice(-47) : cwd
+      case 'petLevel': return `${pet.name} (${pet.type}) — Lv.${pet.level} · ${pet.xp}/${pet.maxXp} XP`
+      case 'aiProvider': return ai.provider === 'none' ? 'None' : `${ai.provider}${ai.model ? ` · ${ai.model}` : ''}`
+      case 'currentStreak': return `${terminalStats.currentStreak} days (best: ${terminalStats.longestStreak})`
+      case 'commandsRun': return totalCmds.toLocaleString()
+      default: return '?'
     }
   }, [sysInfo, pet, ai, terminalStats, cwd, totalCmds])
 
@@ -122,6 +126,8 @@ export default function FtermfetchWidget({ onClose }: Props) {
       a.href = dataUrl
       a.download = `ftermfetch-${new Date().toISOString().slice(0, 10)}.png`
       a.click()
+    } catch (err) {
+      console.error('ftermfetch export failed:', err)
     } finally {
       setExporting(false)
     }
@@ -179,7 +185,7 @@ export default function FtermfetchWidget({ onClose }: Props) {
               </span>
             ))}
             <span className="font-mono text-[10px] mt-2" style={{ color: theme.brightBlack }}>
-              The AI-Powered Terminal · v0.1.0
+              The AI-Powered Terminal · v0.1.2
             </span>
             <span className="font-mono text-[10px]" style={{ color: theme.brightBlack }}>
               {sysInfo ? `↑ ${formatUptime(sysInfo.uptime)}` : ''}

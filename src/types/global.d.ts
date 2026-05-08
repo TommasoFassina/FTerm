@@ -78,7 +78,7 @@ interface FTermAPI {
   onHistorySearch: (cb: () => void) => () => void
   onPetShake: (cb: () => void) => () => void
   onPetStill: (cb: () => void) => () => void
-  getSystemMetrics: () => Promise<{ cpus: any[], freeMem: number, totalMem: number, platform: string, release: string, hostname: string, username: string, arch: string, uptime: number, network: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number } }>
+  getSystemMetrics: () => Promise<{ cpus: any[], freeMem: number, totalMem: number, platform: string, release: string, hostname: string, username: string, arch: string, uptime: number, shell: string, network: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number } }>
   pingHost: (host: string, count?: number) => Promise<{ host: string; rtts: number[]; lost: number; avg: number; min: number; max: number; count: number }>
   portScan: (host: string, ports: number[]) => Promise<{ port: number; open: boolean }[]>
   shellDetect: () => Promise<Array<{ id: string; name: string; shell: string; icon: string }>>
@@ -134,6 +134,7 @@ declare global {
   interface Window {
     fterm: FTermAPI
     __ftermLastPetUpdate: number
+    __ftermActiveTerminal?: import('@xterm/xterm').Terminal | null
   }
 }
 

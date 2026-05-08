@@ -47,6 +47,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const [scrollInfo, setScrollInfo] = useState({ viewportY: 0, baseY: 0, rows: 0 })
   const errorMarkersRef = useRef<Array<{ id: number; line: number; getContext: () => string }>>([])
   const [errorVer, setErrorVer] = useState(0)
+  const [inTuiMode, setInTuiMode] = useState(false)
   const scrollbarDragRef = useRef<{ startY: number; startViewportY: number } | null>(null)
   const closeWidget = useCallback(() => {
     setActiveWidget(null)
@@ -199,13 +200,13 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       pluginManager.notifyTerminalReady(term, instanceId)
     })
 
-    const onFocusHandler = () => { (window as any).__ftermActiveTerminal = term }
-    const onBlurHandler = () => { if ((window as any).__ftermActiveTerminal === term) (window as any).__ftermActiveTerminal = null }
+    const onFocusHandler = () => { window.__ftermActiveTerminal = term }
+    const onBlurHandler = () => { if (window.__ftermActiveTerminal === term) window.__ftermActiveTerminal = null }
     term.textarea?.addEventListener('focus', onFocusHandler)
     term.textarea?.addEventListener('blur', onBlurHandler)
 
     if (active) {
-      setTimeout(() => { term.focus(); (window as any).__ftermActiveTerminal = term }, 50)
+      setTimeout(() => { term.focus(); window.__ftermActiveTerminal = term }, 50)
     }
 
     // Resolve initial CWD: prefer persisted currentCwd (survives app restart)
@@ -280,6 +281,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       // and ConPTY redraws would otherwise spam markers and pet sad-state.
       if (/\x1b\[\?1049h|\x1b\[\?47h|\x1b\[\?1047h/.test(rawData)) {
         inAltScreen = true;
+        setInTuiMode(true)
         disposeAllDecorations();
         autocompleteRef.current = null;
         updateAcUI(null);
@@ -287,6 +289,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       }
       if (/\x1b\[\?1049l|\x1b\[\?47l|\x1b\[\?1047l/.test(rawData)) {
         inAltScreen = false;
+        setInTuiMode(false)
         recentDataBuf = '';
         // ConPTY occasionally leaves residual TUI rows in the main buffer when an
         // alt-screen app (claude code, etc.) exits via Esc. Force a redraw + scroll
@@ -1135,7 +1138,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       )}
 
       {/* AI quick-fix buttons — React overlay, avoids xterm decoration issues */}
-      {settings.showAIAutoFixButton !== false && errorVer >= 0 && scrollInfo.rows > 0 && containerRef.current && (() => {
+      {settings.showAIAutoFixButton !== false && !inTuiMode && errorVer >= 0 && scrollInfo.rows > 0 && containerRef.current && (() => {
         const cellH = containerRef.current!.clientHeight / scrollInfo.rows
         const buf = termRef.current?.buffer.active
         const liveViewportY = buf?.viewportY ?? scrollInfo.viewportY

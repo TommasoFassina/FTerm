@@ -2,6 +2,17 @@
 
 All notable changes to FTerm are documented here.
 
+## [0.1.2] — 2026-05-08
+
+### Fixed
+- **Window state not restored on restart:** FTerm now saves window position and size to `userData/window-state.json` on close/resize/move and restores them on next launch. Minimum 640×480 guard prevents corrupt state from blocking startup.
+- **AI fix button visible in TUI/alt-screen mode:** the ✨ error-fix overlay is now suppressed while an alt-screen app (vim, claude, less, etc.) is active. Fixes phantom overlays on top of full-screen TUI apps.
+- **Docker widget JSON parse crash:** `docker:ps` IPC handler now wraps each line's `JSON.parse` in try/catch and silently skips malformed lines instead of throwing.
+- **ftermfetch uptime shows `0m` for fresh sessions:** uptime now shows seconds (`Xs`) when total uptime is under one minute; the `m` segment is omitted when hours or days dominate.
+- **ftermfetch shell field missing:** `system:metrics` IPC now includes `shell` (`process.env.SHELL` / `process.env.ComSpec`) so the Shell field in the ftermfetch widget shows the real shell name.
+- **ftermfetch custom color mode fallback:** color mode check now correctly reads the per-field color before falling back to the theme palette.
+- **`window.__ftermActiveTerminal` untyped:** declared in `global.d.ts` as `Terminal | null | undefined` instead of implicit `any`.
+
 ## [0.1.1] — 2026-05-02
 
 ### Fixed

@@ -72,10 +72,33 @@ const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: BrowserWindow | null = null
 
+const windowStatePath = join(app.getPath('userData'), 'window-state.json')
+
+function loadWindowState(): { width: number; height: number; x?: number; y?: number } {
+  try {
+    if (existsSync(windowStatePath)) {
+      const s = JSON.parse(readFileSync(windowStatePath, 'utf-8'))
+      if (s.width >= 640 && s.height >= 480) return s
+    }
+  } catch { /* ignore */ }
+  return { width: 1280, height: 800 }
+}
+
+function saveWindowState(): void {
+  if (!mainWindow) return
+  try {
+    const b = mainWindow.getBounds()
+    writeFileSync(windowStatePath, JSON.stringify(b), 'utf-8')
+  } catch { /* ignore */ }
+}
+
 function createWindow(): void {
+  const winState = loadWindowState()
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: winState.width,
+    height: winState.height,
+    x: winState.x,
+    y: winState.y,
     minWidth: 640,
     minHeight: 480,
     frame: false,
@@ -133,10 +156,13 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
 
+  mainWindow.on('close', saveWindowState)
   mainWindow.on('closed', () => {
     pty.killAll()
     mainWindow = null
   })
+  mainWindow.on('resize', saveWindowState)
+  mainWindow.on('moved', saveWindowState)
 
   // Broadcast window state changes to renderer so UI stays in sync
   const sendState = () => {
@@ -330,6 +356,7 @@ ipcMain.handle('system:metrics', async () => {
     username: userInfo().username,
     arch: arch(),
     uptime: uptime(),
+    shell: process.env.SHELL || process.env.ComSpec || '',
     network: net,
   }
 })
@@ -464,7 +491,9 @@ ipcMain.handle('fs:drives', async () => {
 ipcMain.handle('docker:ps', async () => {
   try {
     const { stdout } = await execFileAsync('docker', ['ps', '-a', '--format', '{{json .}}'])
-    return stdout.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    return stdout.trim().split('\n').filter(Boolean).flatMap(line => {
+      try { return [JSON.parse(line)] } catch { return [] }
+    })
   } catch {
     return null
   }

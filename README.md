@@ -165,6 +165,7 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `Ctrl+V` / `Ctrl+Shift+V` | Paste from clipboard |
 | `Ctrl+Shift+C` | Copy selection (Ctrl+C alone sends SIGINT, or copies if text is selected) |
 | `Shift+Arrow` | Keyboard selection in terminal |
+| `Ctrl+Shift+L` | Force redraw (escape hatch for stuck TUI ghosting) |
 
 ---
 
@@ -433,9 +434,7 @@ Most features are cross-platform. A few exceptions:
 |---|---|---|---|
 | Core terminal, AI, themes, git, recording | ✅ | ✅ | ✅ |
 | All widgets (weather, sys-mon, ping…) | ✅ | ✅ | ✅ |
-| `ftermfetch` shell command alias | ✅ | ⚠️ widget only | ⚠️ widget only |
-
-> **`ftermfetch` on macOS/Linux:** The `ftermfetch` terminal widget renders correctly, but the shell alias (`doskey`/PowerShell init) is Windows-only. On Unix you can open the widget via the command palette instead.
+| `ftermfetch` shell command alias | ✅ | ✅ | ✅ |
 
 ---
 
