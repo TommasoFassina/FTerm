@@ -98,7 +98,8 @@ export function createSession(
   customCwd?: string,
   customEnv?: Record<string, string>
 ): { pid: number; sessionId: number; history: string; cwd: string } {
-  const resolvedCwd = customCwd || process.env.USERPROFILE || process.env.HOME || '/'
+  const homedir = process.env.USERPROFILE || process.env.HOME || 'C:\\'
+  const resolvedCwd = (customCwd && existsSync(customCwd)) ? customCwd : homedir
   if (sessions.has(tabId)) {
     const existingPty = sessions.get(tabId)!
     const existingId = sessionIds.get(tabId)!

@@ -112,7 +112,7 @@ function createWindow(): void {
       sandbox: true,            // node-pty runs in main process, preload only uses contextBridge + ipcRenderer
       webSecurity: true,
       allowRunningInsecureContent: false,
-      devTools: isDev,          // disable DevTools in packaged builds — prevents inspecting IPC traffic / token-bearing requests
+      devTools: isDev,
     },
   })
 

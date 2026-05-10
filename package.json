@@ -23,7 +23,8 @@
     "electron:dev": "vite",
     "electron:build": "vite build && electron-builder",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
