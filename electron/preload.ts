@@ -133,7 +133,7 @@ contextBridge.exposeInMainWorld('fterm', {
   getWindowPosition: (): Promise<[number, number]> => ipcRenderer.invoke('window:get-position'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
   openExternal: (url: string) => ipcRenderer.send('window:open-external', url),
-  openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
+openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
   onHistorySearch: (cb: () => void) => {
     const fn = () => cb()
     ipcRenderer.on('shortcut:history-search', fn)
@@ -162,6 +162,8 @@ contextBridge.exposeInMainWorld('fterm', {
     ipcRenderer.invoke('fs:saveDialog', defaultName, filters),
   fsReadFile: (filePath: string): Promise<string> =>
     ipcRenderer.invoke('fs:readFile', filePath),
+  fsReadImage: (filePath: string): Promise<{ mime: string; base64: string; size: number }> =>
+    ipcRenderer.invoke('fs:readImage', filePath),
   fsWriteFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   fsReadDir: (dirPath: string): Promise<Array<{ name: string; isDir: boolean; size: number }>> =>

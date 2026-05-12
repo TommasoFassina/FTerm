@@ -7,7 +7,7 @@ import { useStore } from '@/store'
 import type { AIProvider } from '@/types'
 
 let requestCounter = 0
-const nextId = () => `req-${++requestCounter}-${Date.now()}`
+const nextId = () => `req-${++requestCounter}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 export function useAI() {
   const ai = useStore(s => s.ai)

@@ -84,12 +84,17 @@ function loadWindowState(): { width: number; height: number; x?: number; y?: num
   return { width: 1280, height: 800 }
 }
 
-function saveWindowState(): void {
+let saveWinTimer: ReturnType<typeof setTimeout> | null = null
+function persistWindowStateNow(): void {
   if (!mainWindow) return
   try {
     const b = mainWindow.getBounds()
     writeFileSync(windowStatePath, JSON.stringify(b), 'utf-8')
   } catch { /* ignore */ }
+}
+function saveWindowState(): void {
+  if (saveWinTimer) clearTimeout(saveWinTimer)
+  saveWinTimer = setTimeout(persistWindowStateNow, 250)
 }
 
 function createWindow(): void {
@@ -112,19 +117,11 @@ function createWindow(): void {
       sandbox: true,            // node-pty runs in main process, preload only uses contextBridge + ipcRenderer
       webSecurity: true,
       allowRunningInsecureContent: false,
-      devTools: isDev,
+      devTools: false,
     },
   })
 
   mainWindow.webContents.on('before-input-event', (_e, input) => {
-    // Block DevTools shortcuts in production
-    if (!isDev && input.type === 'keyDown') {
-      const k = input.key.toLowerCase()
-      if (k === 'f12' || (input.control && input.shift && (k === 'i' || k === 'j' || k === 'c'))) {
-        _e.preventDefault()
-        return
-      }
-    }
     if (input.type === 'keyDown' && input.control && !input.shift && !input.alt && input.key.toLowerCase() === 'r') {
       _e.preventDefault()
       mainWindow?.webContents.send('shortcut:history-search')
@@ -156,7 +153,10 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
 
-  mainWindow.on('close', saveWindowState)
+  mainWindow.on('close', () => {
+    if (saveWinTimer) { clearTimeout(saveWinTimer); saveWinTimer = null }
+    persistWindowStateNow()
+  })
   mainWindow.on('closed', () => {
     pty.killAll()
     mainWindow = null
@@ -405,10 +405,19 @@ ipcMain.handle('system:ping', async (_e, host: string, count: number = 10) => {
 
     const stdout = await new Promise<string>((resolve, reject) => {
       let out = ''
+      const MAX_OUT = 256 * 1024
       const child = require('child_process').spawn(pingBin, pingArgs)
       const killTimer = setTimeout(() => { try { child.kill() } catch { } }, 32000)
-      child.stdout.on('data', (d: Buffer) => { out += d.toString() })
-      child.stderr.on('data', (d: Buffer) => { out += d.toString() })
+      const onChunk = (d: Buffer) => {
+        if (out.length >= MAX_OUT) return
+        out += d.toString()
+        if (out.length >= MAX_OUT) {
+          out = out.slice(0, MAX_OUT)
+          try { child.kill() } catch { /* ignore */ }
+        }
+      }
+      child.stdout.on('data', onChunk)
+      child.stderr.on('data', onChunk)
       child.on('close', () => { clearTimeout(killTimer); resolve(out) })
       child.on('error', (err: Error) => { clearTimeout(killTimer); reject(err) })
     })
@@ -430,12 +439,18 @@ const FS_READDIR_ROOTS: string[] = [
   tmpdir(),
   process.cwd(),
   ...(process.platform === 'win32'
-    ? ['C:\\', 'D:\\', 'E:\\', 'F:\\']
+    // All possible Windows drive letters — covers external/mapped drives (T:, etc.)
+    ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(l => `${l}:\\`)
     : ['/']),
 ].map(p => require('path').resolve(p))
 
-function isPathAllowed(resolved: string): boolean {
+function isPathAllowed(inputPath: string): boolean {
   const path = require('path')
+  if (typeof inputPath !== 'string' || inputPath.length === 0) return false
+  // Resolve first to collapse `..` segments — only then compare against allowlist.
+  let resolved: string
+  try { resolved = path.resolve(inputPath) } catch { return false }
+  if (!path.isAbsolute(resolved)) return false
   const norm = path.normalize(resolved)
   return FS_READDIR_ROOTS.some(root => {
     const r = path.normalize(root)
@@ -627,31 +642,39 @@ ipcMain.handle('claude:import-credentials', async () => {
 
 // ─── Git System IPC ───────────────────────────────────────────────────────────
 
+function assertRepoPath(p: string): string {
+  if (typeof p !== 'string' || p.length === 0) throw new Error('Invalid repo path')
+  const path = require('path')
+  const resolved = path.resolve(p)
+  if (!path.isAbsolute(resolved) || !isPathAllowed(resolved)) throw new Error('Path not allowed')
+  return resolved
+}
+
 ipcMain.handle('git:repository', (_e, cwd: string) => {
-  console.log('[git] detectRepository path:', JSON.stringify(cwd))
-  return gitService.detectRepository(cwd)
+  const safe = assertRepoPath(cwd)
+  return gitService.detectRepository(safe)
 })
 ipcMain.handle('git:status', (_e, repoPath: string) => {
-  console.log('[git] getStatus path:', JSON.stringify(repoPath))
-  return gitService.getStatus(repoPath)
+  const safe = assertRepoPath(repoPath)
+  return gitService.getStatus(safe)
 })
-ipcMain.handle('git:branches', (_e, repoPath: string) => gitService.getBranches(repoPath))
-ipcMain.handle('git:log', (_e, repoPath: string, limit: number) => gitService.getCommits(repoPath, limit))
-ipcMain.handle('git:checkout', (_e, repoPath: string, branch: string) => gitService.checkoutBranch(repoPath, branch))
-ipcMain.handle('git:commit', (_e, repoPath: string, message: string) => gitService.createCommit(repoPath, message))
-ipcMain.handle('git:push', (_e, repoPath: string, remote: string, branch: string) => gitService.push(repoPath, remote, branch))
-ipcMain.handle('git:pull', (_e, repoPath: string, remote: string, branch: string) => gitService.pull(repoPath, remote, branch))
-ipcMain.handle('git:remotes', (_e, repoPath: string) => gitService.getRemotes(repoPath))
-ipcMain.handle('git:stats', (_e, repoPath: string) => gitService.getRepoStats(repoPath))
-ipcMain.handle('git:diff', (_e, repoPath: string, args?: string[]) => gitService.getDiff(repoPath, args))
-ipcMain.handle('git:stage', (_e, repoPath: string, filePath: string) => gitService.stageFile(repoPath, filePath))
-ipcMain.handle('git:unstage', (_e, repoPath: string, filePath: string) => gitService.unstageFile(repoPath, filePath))
-ipcMain.handle('git:stash:list', (_e, repoPath: string) => gitService.stashList(repoPath))
-ipcMain.handle('git:stash:push', (_e, repoPath: string, message?: string) => gitService.stashPush(repoPath, message))
-ipcMain.handle('git:stash:pop', (_e, repoPath: string, index: number) => gitService.stashPop(repoPath, index))
-ipcMain.handle('git:stash:apply', (_e, repoPath: string, index: number) => gitService.stashApply(repoPath, index))
-ipcMain.handle('git:stash:drop', (_e, repoPath: string, index: number) => gitService.stashDrop(repoPath, index))
-ipcMain.handle('git:discard', (_e, repoPath: string, filePath: string) => gitService.discardFile(repoPath, filePath))
+ipcMain.handle('git:branches', (_e, repoPath: string) => gitService.getBranches(assertRepoPath(repoPath)))
+ipcMain.handle('git:log', (_e, repoPath: string, limit: number) => gitService.getCommits(assertRepoPath(repoPath), limit))
+ipcMain.handle('git:checkout', (_e, repoPath: string, branch: string) => gitService.checkoutBranch(assertRepoPath(repoPath), branch))
+ipcMain.handle('git:commit', (_e, repoPath: string, message: string) => gitService.createCommit(assertRepoPath(repoPath), message))
+ipcMain.handle('git:push', (_e, repoPath: string, remote: string, branch: string) => gitService.push(assertRepoPath(repoPath), remote, branch))
+ipcMain.handle('git:pull', (_e, repoPath: string, remote: string, branch: string) => gitService.pull(assertRepoPath(repoPath), remote, branch))
+ipcMain.handle('git:remotes', (_e, repoPath: string) => gitService.getRemotes(assertRepoPath(repoPath)))
+ipcMain.handle('git:stats', (_e, repoPath: string) => gitService.getRepoStats(assertRepoPath(repoPath)))
+ipcMain.handle('git:diff', (_e, repoPath: string, args?: string[]) => gitService.getDiff(assertRepoPath(repoPath), args))
+ipcMain.handle('git:stage', (_e, repoPath: string, filePath: string) => gitService.stageFile(assertRepoPath(repoPath), filePath))
+ipcMain.handle('git:unstage', (_e, repoPath: string, filePath: string) => gitService.unstageFile(assertRepoPath(repoPath), filePath))
+ipcMain.handle('git:stash:list', (_e, repoPath: string) => gitService.stashList(assertRepoPath(repoPath)))
+ipcMain.handle('git:stash:push', (_e, repoPath: string, message?: string) => gitService.stashPush(assertRepoPath(repoPath), message))
+ipcMain.handle('git:stash:pop', (_e, repoPath: string, index: number) => gitService.stashPop(assertRepoPath(repoPath), index))
+ipcMain.handle('git:stash:apply', (_e, repoPath: string, index: number) => gitService.stashApply(assertRepoPath(repoPath), index))
+ipcMain.handle('git:stash:drop', (_e, repoPath: string, index: number) => gitService.stashDrop(assertRepoPath(repoPath), index))
+ipcMain.handle('git:discard', (_e, repoPath: string, filePath: string) => gitService.discardFile(assertRepoPath(repoPath), filePath))
 
 // ─── File system IPC ─────────────────────────────────────────────────────────
 
@@ -684,6 +707,23 @@ ipcMain.handle('fs:readFile', (_e, filePath: string) => {
   const resolved = path.resolve(filePath)
   if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
   return readFileSync(resolved, 'utf8')
+})
+
+ipcMain.handle('fs:readImage', (_e, filePath: string) => {
+  const path = require('path')
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('Invalid path')
+  const resolved = path.resolve(filePath)
+  if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
+  const ext = resolved.split('.').pop()?.toLowerCase() ?? ''
+  const mime: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+  }
+  if (!mime[ext]) throw new Error('Unsupported image type')
+  const stat = statSync(resolved)
+  if (stat.size > 10 * 1024 * 1024) throw new Error('Image too large (>10MB)')
+  const data = readFileSync(resolved)
+  return { mime: mime[ext], base64: data.toString('base64'), size: data.length }
 })
 
 ipcMain.handle('fs:writeFile', (_e, filePath: string, content: string) => {

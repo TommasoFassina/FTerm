@@ -2,6 +2,19 @@
 
 All notable changes to FTerm are documented here.
 
+## [Unreleased]
+
+### Added
+- **CWD click opens file explorer** — clicking the `cwd` segment in the status bar opens the file explorer widget at the current working directory of the active tab.
+- **Image files open in viewer from file explorer** — clicking an image file (`png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `ico`, `svg`) inside the file explorer widget now opens it in the built-in image viewer overlay instead of launching the OS default viewer.
+- **Floating/draggable image viewer** — image viewer has a new toggle button (Minimize2 icon) to switch between fullscreen overlay mode and a floating draggable window. In floating mode the window can be repositioned by dragging its header and resized via the bottom-right corner handle.
+- **`imgcat` image viewer widget** — `imgcat <path>` now opens the image in a full-pane overlay widget instead of writing it inline to the terminal via OSC 1337. Supports zoom in/out, reset, click-outside or Esc to close. Eliminates the black-screen repaint glitch that occurred with the previous inline approach.
+- **AI code block actions** — shell code blocks in chat responses now show **Run in terminal**, **Insert at cursor**, and **Save to file** buttons. Non-shell blocks show **Insert** and **Save**. A brief status flash confirms each action.
+
+### Fixed
+- **xterm `Cannot read properties of undefined (reading 'dimensions')` crash** — `ptyCreate` resolves as a Promise microtask, causing `term.write(history)` to fire before the Canvas renderer's `requestAnimationFrame` initialization completes. Fixed by deferring the history write with `setTimeout(0)` so it runs as a macrotask, after the Canvas addon is fully wired.
+- **Same xterm crash from `@xterm/addon-image`** — `ImageAddon` hooks into xterm's render pipeline and fires `Viewport.syncScrollArea` on scroll/resize events where `_renderService` can be undefined on backgrounded panes. Removed `ImageAddon` entirely since `imgcat` no longer uses inline OSC 1337 rendering.
+
 ## [0.1.2] — 2026-05-08
 
 ### Fixed

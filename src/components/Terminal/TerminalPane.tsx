@@ -24,6 +24,7 @@ import DataTableWidget from '@/components/Widgets/DataTableWidget'
 import PortScanWidget from '@/components/Widgets/PortScanWidget'
 import SnippetsWidget from '@/components/Widgets/SnippetsWidget'
 import FtermfetchWidget from '@/components/Widgets/FtermfetchWidget'
+import ImageViewerWidget from '@/components/Widgets/ImageViewerWidget'
 import HistorySearch from './HistorySearch'
 import { searchAddons, terminalInstances } from './terminalRegistry'
 
@@ -71,6 +72,8 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const setTabBell = useStore(s => s.setTabBell)
   const updateTabCwd = useStore(s => s.updateTabCwd)
   const recordTerminalError = useStore(s => s.recordTerminalError)
+  const pendingWidget = useStore(s => s.pendingWidget)
+  const setPendingWidget = useStore(s => s.setPendingWidget)
   const currentProfile = profiles.find(p => p.id === profileId)
   const instanceId = `${tabId}-${paneId}`
 
@@ -105,7 +108,46 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     const fit = new FitAddon()
     fitRef.current = fit
     term.loadAddon(fit)
-    term.loadAddon(new WebLinksAddon())
+    // Clickable links — route through main process so we open in OS default browser,
+    // never inside Electron renderer. Default web-links addon regex handles http(s);
+    // bare localhost:PORT is detected separately via registerLinkProvider below.
+    const openLink = (_e: MouseEvent, uri: string) => {
+      let url = uri.trim()
+      if (!/^https?:\/\//i.test(url)) {
+        if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d{1,5})?(\/.*)?$/i.test(url)) {
+          url = 'http://' + url
+        } else {
+          return
+        }
+      }
+      try { window.fterm.openExternal(url) } catch { /* ignore */ }
+    }
+    term.loadAddon(new WebLinksAddon(openLink))
+
+    // Extra link provider for bare host:port patterns (localhost:3000, 127.0.0.1:8080)
+    const BARE_HOST_RE = /\b(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d{1,5})(\/[^\s"'`<>]*)?/gi
+    try {
+      term.registerLinkProvider({
+        provideLinks(bufferLineNumber, callback) {
+          const line = term.buffer.active.getLine(bufferLineNumber - 1)
+          const text = line?.translateToString(true) ?? ''
+          if (!text) { callback(undefined); return }
+          const links: any[] = []
+          let m: RegExpExecArray | null
+          BARE_HOST_RE.lastIndex = 0
+          while ((m = BARE_HOST_RE.exec(text)) !== null) {
+            const startCol = m.index + 1
+            const endCol = startCol + m[0].length - 1
+            links.push({
+              text: m[0],
+              range: { start: { x: startCol, y: bufferLineNumber }, end: { x: endCol, y: bufferLineNumber } },
+              activate: (_e: MouseEvent, url: string) => openLink(_e, url),
+            })
+          }
+          callback(links.length ? links : undefined)
+        }
+      })
+    } catch (e) { console.warn('localhost link provider failed', e) }
     const search = new SearchAddon()
     term.loadAddon(search)
 
@@ -148,48 +190,20 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       containerRef.current.style.fontFeatureSettings = '"liga" 1, "calt" 1'
     }
 
-    // WebGL addon does not support transparent backgrounds.
-    // When opacity < 1 (acrylic/blur visible), use Canvas renderer instead.
-    const needsTransparency = (useStore.getState().settings.opacity ?? 0.85) < 1
-
-    if (needsTransparency) {
-      try {
-        const ca = new CanvasAddon()
-        canvasRef.current = ca
-        term.loadAddon(ca)
-      } catch (e) {
-        console.warn('Canvas addon failed, using DOM renderer', e)
-      }
-    } else {
-      let supportsWebGL = true;
-      try {
-        const canvas = document.createElement('canvas');
-        if (!canvas.getContext('webgl2') && !canvas.getContext('webgl')) {
-          supportsWebGL = false;
-        }
-      } catch {
-        supportsWebGL = false;
-      }
-
-      if (supportsWebGL) {
-        try {
-          const gl = new WebglAddon()
-          webglRef.current = gl
-          term.loadAddon(gl)
-        } catch (e) {
-          console.warn('WebGL addon failed, falling back to Canvas', e)
-          const ca = new CanvasAddon()
-          canvasRef.current = ca
-          term.loadAddon(ca)
-        }
-      } else {
-        const ca = new CanvasAddon()
-        canvasRef.current = ca
-        term.loadAddon(ca)
-      }
+    // Canvas renderer: supports transparency for acrylic/blur backgrounds.
+    try {
+      const ca = new CanvasAddon()
+      canvasRef.current = ca
+      term.loadAddon(ca)
+    } catch (e) {
+      console.warn('Canvas addon failed, using DOM renderer', e)
     }
 
-    fit.fit()
+    // Defer first fit to next frame — renderer addon may not have wired its
+    // internals yet synchronously, leading to Viewport.dimensions crashes.
+    requestAnimationFrame(() => {
+      try { fit.fit() } catch { /* renderer not ready */ }
+    })
     setScrollInfo({ viewportY: 0, baseY: 0, rows: term.rows })
     termRef.current = term
 
@@ -230,7 +244,10 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       if (cwd) updateTabCwd(tabId, paneId, cwd)
 
       if (history) {
-        term.write(history)
+        // Canvas renderer wires its internals in a rAF. history arrives via
+        // Promise microtask which beats that rAF → syncScrollArea crash.
+        // setTimeout(0) queues as macrotask, runs after the rAF.
+        setTimeout(() => term.write(history), 0)
       }
 
       removePtyExit = window.fterm.onPtyExit(instanceId, sessionId, code => {
@@ -412,6 +429,12 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     };
 
     term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+Shift+K: clear all imgcat-rendered images + scrollback
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
+        e.preventDefault()
+        try { term.clear() } catch { /* ignore */ }
+        return false
+      }
       // Ctrl+Shift+L: force redraw + scroll-to-bottom — escape hatch for stuck
       // TUI ghosting (claude code etc. that left residual rows on Esc).
       if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
@@ -549,10 +572,67 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
 
 
       if (e.type === 'keydown' && e.key === 'Enter') {
-        const input = currentInputRef.current.trim();
+        let input = currentInputRef.current.trim();
+        // Fallback only for imgcat-with-tab-completion case: if the tracked input is
+        // just "imgcat" (no arg), parse the prompt line from xterm buffer to recover
+        // the shell-echoed filename. Don't apply broadly — would break no-arg widgets.
+        if (input === 'imgcat') {
+          try {
+            const buf = term.buffer.active
+            const line = buf.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? ''
+            const m = line.match(/imgcat\s+(.+?)\s*$/i)
+            if (m && m[1]) input = 'imgcat ' + m[1].trim()
+          } catch { /* ignore */ }
+        }
 
         // ── Widget commands ──────────────────────────────────────
         const plugins = useStore.getState().plugins
+
+        // imgcat clear — wipe all rendered images
+        if (input === 'imgcat clear' || input === 'imgcat -c' || input === 'imgcat --clear') {
+          e.preventDefault()
+          window.fterm.ptyWrite(instanceId, '\x03')
+          currentInputRef.current = ''
+          try { term.clear() } catch { /* ignore */ }
+          return false
+        }
+
+        // imgcat <path> — opens image in overlay widget (avoids xterm Canvas repaint issues)
+        if (input.startsWith('imgcat ') || input === 'imgcat') {
+          e.preventDefault()
+          const rawArg = input.slice(7).trim().replace(/^["']|["']$/g, '')
+          const inputLen = currentInputRef.current.length
+          currentInputRef.current = ''
+          if (ac) updateAcUI(null)
+          autocompleteRef.current = null
+          // Erase typed command from PTY display
+          window.fterm.ptyWrite(instanceId, '\x7f'.repeat(inputLen))
+          if (!rawArg) {
+            term.write(`\r\n\x1b[33mUsage: imgcat <path-to-image>\x1b[0m\r\n`)
+            return false;
+          }
+          (async () => {
+            try {
+              const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd
+                || window.fterm.homedir
+              const sep = cwd.includes('\\') ? '\\' : '/'
+              const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(rawArg)
+              const full = isAbs ? rawArg : (cwd.replace(/[\\/]+$/, '') + sep + rawArg)
+              const { base64 } = await window.fterm.fsReadImage(full)
+              const ext = full.split('.').pop()?.toLowerCase() ?? ''
+              const mime = ext === 'png' ? 'image/png'
+                : ext === 'gif' ? 'image/gif'
+                : ext === 'webp' ? 'image/webp'
+                : ext === 'svg' ? 'image/svg+xml'
+                : 'image/jpeg'
+              setActiveWidget({ type: 'imgcat', data: { path: full, base64, mime } })
+            } catch (err: any) {
+              console.error('[imgcat] error', err)
+              term.write(`\r\n\x1b[31mimgcat: ${err?.message || 'failed'}\x1b[0m\r\n`)
+            }
+          })()
+          return false
+        }
 
         // explore [path]
         if (input === 'explore' || input.startsWith('explore ')) {
@@ -819,6 +899,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           autocompleteRef.current = null;
           updateAcUI(null);
         } else if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) <= 126) {
+          currentInputRef.current += data;
+        } else if (data.length > 1 && !/[\x00-\x1f\x7f]/.test(data)) {
+          // Multi-char printable (paste / IME): track for widget intercepts.
           currentInputRef.current += data;
         }
 
@@ -1093,6 +1176,13 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     },
   ]
 
+  // Consume pendingWidget from store (e.g. CWD click in StatusBar)
+  useEffect(() => {
+    if (!pendingWidget || pendingWidget.tabId !== tabId || !active) return
+    setActiveWidget({ type: pendingWidget.type, data: pendingWidget.data })
+    setPendingWidget(null)
+  }, [pendingWidget, tabId, active, setPendingWidget])
+
   // Close widget on Escape (outside of xterm's key handler, for safety)
   useEffect(() => {
     if (!activeWidget) return
@@ -1238,6 +1328,31 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             key="file-explorer"
             path={activeWidget.data?.path ?? '.'}
             onClose={closeWidget}
+            onSetCwd={(dirPath: string) => {
+              const quoted = /\s/.test(dirPath) ? `"${dirPath}"` : dirPath
+              const shell = (currentProfile?.shell || '').toLowerCase()
+              const isWinPath = /^[A-Za-z]:[\\/]/.test(dirPath)
+              const isPwsh = shell.includes('pwsh') || shell.includes('powershell')
+              const isBash = shell.includes('bash') || shell.includes('zsh') || shell.includes('fish') || shell.includes('sh')
+              // Default Windows profile is cmd.exe — assume CMD unless shell is explicitly PS/bash.
+              const isCmd = !isPwsh && !isBash && isWinPath
+              const cmd = isCmd ? `cd /d ${quoted}` : `cd ${quoted}`
+              window.fterm.ptyWrite(instanceId, '\x03')
+              setTimeout(() => window.fterm.ptyWrite(instanceId, cmd + '\r'), 30)
+              closeWidget()
+            }}
+            onOpenImage={async (fp: string) => {
+              try {
+                const { base64 } = await window.fterm.fsReadImage(fp)
+                const ext = fp.split('.').pop()?.toLowerCase() ?? ''
+                const mime = ext === 'png' ? 'image/png'
+                  : ext === 'gif' ? 'image/gif'
+                  : ext === 'webp' ? 'image/webp'
+                  : ext === 'svg' ? 'image/svg+xml'
+                  : 'image/jpeg'
+                setActiveWidget({ type: 'imgcat', data: { path: fp, base64, mime } })
+              } catch { /* silently fall back to OS open */ window.fterm.openPath(fp) }
+            }}
           />
         )}
         {activeWidget?.type === 'sys-mon' && (
@@ -1273,6 +1388,15 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         )}
         {activeWidget?.type === 'ftermfetch' && (
           <FtermfetchWidget key="ftermfetch" onClose={closeWidget} />
+        )}
+        {activeWidget?.type === 'imgcat' && (
+          <ImageViewerWidget
+            key="imgcat"
+            imagePath={activeWidget.data?.path ?? ''}
+            base64={activeWidget.data?.base64 ?? ''}
+            mime={activeWidget.data?.mime ?? 'image/jpeg'}
+            onClose={closeWidget}
+          />
         )}
       </AnimatePresence>
     </div>

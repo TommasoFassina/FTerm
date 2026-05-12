@@ -45,6 +45,8 @@ interface Props {
   path: string
   onClose: () => void
   onNavigate?: (newPath: string) => void
+  onSetCwd?: (dirPath: string) => void
+  onOpenImage?: (path: string) => void
 }
 
 function formatSize(bytes: number): string {
@@ -71,7 +73,9 @@ function driveUsagePercent(drive: Drive): number {
   return Math.round(((drive.size - drive.freeSpace) / drive.size) * 100)
 }
 
-export default function FileExplorerWidget({ path: initialPath, onClose, onNavigate }: Props) {
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'])
+
+export default function FileExplorerWidget({ path: initialPath, onClose, onNavigate, onSetCwd, onOpenImage }: Props) {
   const { settings, addEditorTab } = useStore()
   const [currentPath, setCurrentPath] = useState(initialPath || '.')
   const [files, setFiles] = useState<FileEntry[]>([])
@@ -179,6 +183,10 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
 
   const openFile = async (fp: string) => {
     const ext = fp.split('.').pop()?.toLowerCase() ?? ''
+    if (IMAGE_EXTS.has(ext) && onOpenImage) {
+      onOpenImage(fp)
+      return
+    }
     if (settings.explorerOpenInTerminal !== false && TEXT_EXTS.has(ext)) {
       try {
         const content = await window.fterm.fsReadFile(fp)
@@ -259,6 +267,15 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
             <Folder size={12} className="text-yellow-400 shrink-0" />
             <span className="font-mono text-white/90 truncate text-xs">{currentPath}</span>
           </div>
+          {onSetCwd && (
+            <button
+              onClick={() => onSetCwd(currentPath)}
+              className="px-2 py-1 rounded text-[11px] font-medium bg-blue-500/20 border border-blue-500/30 text-blue-300 hover:bg-blue-500/30 hover:text-blue-200 transition-colors shrink-0"
+              title="Set this folder as terminal working directory (cd)"
+            >
+              cd here
+            </button>
+          )}
           <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded transition-colors text-white/50 hover:text-white shrink-0">
             <X size={15} />
           </button>
@@ -377,13 +394,24 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
               </button>
             )}
             {contextMenu.entry.type === 'folder' && (
-              <button
-                className="flex items-center gap-2.5 w-full px-3 py-1.5 text-sm text-white/80 hover:text-white hover:bg-white/8 transition-colors"
-                onClick={() => { navigate(contextMenu.entry.name); setContextMenu(null) }}
-              >
-                <Folder size={13} className="text-yellow-400" />
-                Open Folder
-              </button>
+              <>
+                <button
+                  className="flex items-center gap-2.5 w-full px-3 py-1.5 text-sm text-white/80 hover:text-white hover:bg-white/8 transition-colors"
+                  onClick={() => { navigate(contextMenu.entry.name); setContextMenu(null) }}
+                >
+                  <Folder size={13} className="text-yellow-400" />
+                  Open Folder
+                </button>
+                {onSetCwd && (
+                  <button
+                    className="flex items-center gap-2.5 w-full px-3 py-1.5 text-sm text-white/80 hover:text-white hover:bg-white/8 transition-colors"
+                    onClick={() => { onSetCwd(contextMenu.fullPath); setContextMenu(null) }}
+                  >
+                    <ChevronRight size={13} className="text-blue-400" />
+                    Set as terminal CWD
+                  </button>
+                )}
+              </>
             )}
             <button
               className="flex items-center gap-2.5 w-full px-3 py-1.5 text-sm text-white/80 hover:text-white hover:bg-white/8 transition-colors"

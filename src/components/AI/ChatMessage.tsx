@@ -2,6 +2,7 @@ import { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '@/types'
+import { useStore } from '@/store'
 
 const PROVIDER_LABELS: Record<string, string> = {
   claude: 'Claude', openai: 'GPT', copilot: 'Copilot', ollama: 'Ollama',
@@ -122,6 +123,12 @@ export default memo(ChatMessageBubble, (prev, next) => (
 
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+
+  function flash(msg: string) {
+    setStatus(msg)
+    setTimeout(() => setStatus(null), 1800)
+  }
 
   function copy() {
     navigator.clipboard.writeText(code).then(() => {
@@ -130,24 +137,68 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     })
   }
 
+  function activeInstanceId(): string | null {
+    const { tabs, activeTabId } = useStore.getState()
+    const tab = tabs.find(t => t.id === activeTabId)
+    if (!tab) return null
+    const paneId = tab.activePaneId ?? '0'
+    return `${tab.id}-${paneId}`
+  }
+
+  const isShell = /^(bash|sh|shell|zsh|fish|powershell|pwsh|ps1|cmd|bat|console)$/i.test(lang)
+
+  function runInTerminal() {
+    const id = activeInstanceId()
+    if (!id) { flash('no active terminal'); return }
+    // Trim trailing newline, then submit w/ \r so shell executes
+    window.fterm.ptyWrite(id, code.replace(/\r?\n$/, '') + '\r')
+    flash('sent')
+  }
+
+  function insertAtCursor() {
+    const id = activeInstanceId()
+    if (!id) { flash('no active terminal'); return }
+    window.fterm.ptyWrite(id, code)
+    flash('inserted')
+  }
+
+  async function saveToFile() {
+    try {
+      const extMap: Record<string, string> = {
+        ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', py: 'py', rs: 'rs',
+        go: 'go', java: 'java', c: 'c', cpp: 'cpp', cs: 'cs', rb: 'rb',
+        php: 'php', sh: 'sh', bash: 'sh', zsh: 'sh', fish: 'fish',
+        powershell: 'ps1', pwsh: 'ps1', ps1: 'ps1', cmd: 'bat', bat: 'bat',
+        json: 'json', yaml: 'yaml', yml: 'yml', toml: 'toml',
+        html: 'html', css: 'css', scss: 'scss', md: 'md', sql: 'sql',
+        xml: 'xml', txt: 'txt',
+      }
+      const ext = extMap[lang.toLowerCase()] || 'txt'
+      const path = await window.fterm.fsSaveDialog(`snippet.${ext}`)
+      if (!path) return
+      await window.fterm.fsWriteFile(path, code)
+      flash('saved')
+    } catch (e: any) {
+      flash(e?.message || 'save failed')
+    }
+  }
+
+  const btnCls = 'text-[10px] text-[#6e7681] hover:text-[#c9d1d9] transition-colors px-1.5 py-0.5 rounded hover:bg-white/5'
+
   return (
     <div className="relative group rounded-md overflow-hidden border border-[#30363d] my-2">
-      {lang && (
-        <div className="flex items-center justify-between px-3 py-1 bg-[#0d1117] border-b border-[#30363d]">
-          <span className="text-[10px] text-[#6e7681] font-mono">{lang}</span>
-          <button onClick={copy} className="text-[10px] text-[#6e7681] hover:text-[#c9d1d9] transition-colors">
-            {copied ? '✓ copied' : 'copy'}
-          </button>
+      <div className="flex items-center justify-between px-3 py-1 bg-[#0d1117] border-b border-[#30363d]">
+        <span className="text-[10px] text-[#6e7681] font-mono">{lang || 'code'}</span>
+        <div className="flex items-center gap-1">
+          {status && <span className="text-[10px] text-[#3fb950] mr-1">{status}</span>}
+          {isShell && (
+            <button onClick={runInTerminal} className={btnCls} title="Run in active terminal (Enter)">run</button>
+          )}
+          <button onClick={insertAtCursor} className={btnCls} title="Insert at terminal cursor (no Enter)">insert</button>
+          <button onClick={saveToFile} className={btnCls} title="Save to file…">save</button>
+          <button onClick={copy} className={btnCls}>{copied ? '✓ copied' : 'copy'}</button>
         </div>
-      )}
-      {!lang && (
-        <button
-          onClick={copy}
-          className="absolute top-1.5 right-2 text-[10px] text-[#6e7681] hover:text-[#c9d1d9] opacity-0 group-hover:opacity-100 transition-all"
-        >
-          {copied ? '✓' : 'copy'}
-        </button>
-      )}
+      </div>
       <pre className="px-3 py-2.5 text-[12px] font-mono text-[#c9d1d9] bg-[#0d1117] overflow-x-auto leading-relaxed whitespace-pre">
         {code}
       </pre>

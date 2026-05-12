@@ -97,7 +97,7 @@ export function createSession(
   customArgs?: string[],
   customCwd?: string,
   customEnv?: Record<string, string>
-): { pid: number; sessionId: number; history: string; cwd: string } {
+): { pid: number; sessionId: number; history: string; cwd: string; reused: boolean } {
   const homedir = process.env.USERPROFILE || process.env.HOME || 'C:\\'
   const resolvedCwd = (customCwd && existsSync(customCwd)) ? customCwd : homedir
   if (sessions.has(tabId)) {
@@ -105,7 +105,7 @@ export function createSession(
     const existingId = sessionIds.get(tabId)!
     const history = (sessionHistory.get(tabId) || []).join('')
     try { existingPty.resize(Math.max(cols, 10), Math.max(rows, 5)) } catch { }
-    return { pid: existingPty.pid!, sessionId: existingId, history, cwd: resolvedCwd }
+    return { pid: existingPty.pid!, sessionId: existingId, history, cwd: resolvedCwd, reused: true }
   }
 
   const sessionId = ++nextSessionId
@@ -206,7 +206,7 @@ export function createSession(
 
   sessions.set(tabId, ptyProcess)
 
-  return { pid: ptyProcess.pid!, sessionId, history: '', cwd: resolvedCwd }
+  return { pid: ptyProcess.pid!, sessionId, history: '', cwd: resolvedCwd, reused: false }
 }
 
 export function writeToSession(tabId: string, data: string): void {

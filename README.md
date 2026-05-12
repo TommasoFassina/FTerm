@@ -73,6 +73,7 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **Quick actions** — customizable one-click prompts in the sidebar
 - **System prompt editor** — built-in personas (Caveman, Pirate, ELI5, Terse…) or write your own
 - **Effort levels** — fast / auto / thorough maps to different model tiers automatically
+- **Code block actions** — run shell code directly in the active terminal, insert at cursor, or save to file from any AI response
 
 ### Widgets
 - **Interactive widgets** — type commands to render rich UI panels inside the terminal (see [Widget Commands](#widget-commands))
@@ -141,6 +142,7 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `query [sql]` | Data Table — SQL-like queries on system data |
 | `ftermfetch` | System Info — customizable neofetch-style card; export as PNG |
 | `snippets` | Snippets Manager — save and insert reusable commands |
+| `imgcat <path>` | Image Viewer — open an image in a full-pane overlay with zoom controls |
 
 ---
 

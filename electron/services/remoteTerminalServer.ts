@@ -68,24 +68,38 @@ function getLocalIp(): string {
 
 async function allowFirewall(port: number): Promise<boolean> {
   if (process.platform !== 'win32') return true
-  const { exec } = require('child_process') as typeof import('child_process')
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return false
+  const { execFile } = require('child_process') as typeof import('child_process')
   const ruleName = `FTerm Remote Terminal Port ${port}`
-  const args = `advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port}`
+  // execFile w/ arg array — no shell parsing, no injection via port/ruleName
   return new Promise<boolean>(resolve =>
-    exec(`netsh ${args}`, (err) => resolve(!err))
+    execFile('netsh', [
+      'advfirewall', 'firewall', 'add', 'rule',
+      `name=${ruleName}`,
+      'dir=in', 'action=allow', 'protocol=TCP',
+      `localport=${port}`,
+    ], { timeout: 5000 }, (err) => resolve(!err))
   )
 }
 
-function getShell(): string {
+let cachedRemoteShell: string | null = null
+async function detectRemoteShell(): Promise<void> {
+  if (cachedRemoteShell) return
   if (process.platform === 'win32') {
-    try {
-      const { execFileSync } = require('child_process') as typeof import('child_process')
-      const out = execFileSync('where', ['pwsh.exe'], { timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim()
-      if (out) return out.split('\n')[0].trim()
-    } catch { /* not found */ }
-    return 'powershell.exe'
+    cachedRemoteShell = await new Promise<string>(resolve => {
+      const { execFile } = require('child_process') as typeof import('child_process')
+      execFile('where', ['pwsh.exe'], { timeout: 1500 }, (err, stdout) => {
+        if (err || !stdout) return resolve('powershell.exe')
+        const first = String(stdout).split(/\r?\n/)[0].trim()
+        resolve(first || 'powershell.exe')
+      })
+    })
+  } else {
+    cachedRemoteShell = process.env.SHELL || '/bin/bash'
   }
-  return process.env.SHELL || '/bin/bash'
+}
+function getShell(): string {
+  return cachedRemoteShell || (process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash'))
 }
 
 function broadcastClientCount() {
@@ -215,6 +229,7 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
   currentPin = generatePin()
   tokens.clear()
 
+  await detectRemoteShell()
   const firewallOk = await allowFirewall(port)
 
   const allIps = getLocalIps()

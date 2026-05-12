@@ -21,7 +21,7 @@ interface FTermAPI {
   homedir: string
 
   // PTY
-  ptyCreate: (tabId: string, cols: number, rows: number, shell?: string, args?: string[], cwd?: string, env?: Record<string, string>) => Promise<{ pid: number; sessionId: number; history: string; cwd: string }>
+  ptyCreate: (tabId: string, cols: number, rows: number, shell?: string, args?: string[], cwd?: string, env?: Record<string, string>) => Promise<{ pid: number; sessionId: number; history: string; cwd: string; reused: boolean }>
   ptyWrite: (tabId: string, data: string) => void
   ptyResize: (tabId: string, cols: number, rows: number) => void
   ptyKill: (tabId: string) => void
@@ -87,6 +87,7 @@ interface FTermAPI {
   fsOpenDialog: () => Promise<string | null>
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]) => Promise<string | null>
   fsReadFile: (filePath: string) => Promise<string>
+  fsReadImage: (filePath: string) => Promise<{ mime: string; base64: string; size: number }>
   fsWriteFile: (filePath: string, content: string) => Promise<boolean>
   fsReadDir: (dirPath: string) => Promise<Array<{ name: string; isDir: boolean; size: number }>>
   fsDrives: () => Promise<Array<{ path: string; label: string; size: number; freeSpace: number }>>

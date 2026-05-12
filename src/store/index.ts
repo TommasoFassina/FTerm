@@ -187,6 +187,10 @@ interface FTermState {
   remoteTerminal: { enabled: boolean; port: number; pin: string; clients: number }
   setRemoteTerminal: (updates: Partial<{ enabled: boolean; port: number; pin: string; clients: number }>) => void
 
+  // Pending widget trigger (runtime, not persisted) — allows StatusBar/other components to open a widget in the active pane
+  pendingWidget: { type: string; data?: any; tabId: string } | null
+  setPendingWidget: (w: { type: string; data?: any; tabId: string } | null) => void
+
   // Git System
   git: {
     currentRepo: string | null
@@ -859,6 +863,10 @@ export const useStore = create<FTermState>()(
           return { chatMessages: updated }
         }),
       clearChat: () => set({ chatMessages: [] }),
+
+      // Pending widget trigger
+      pendingWidget: null,
+      setPendingWidget: (w) => set({ pendingWidget: w }),
 
       // Git
       git: {

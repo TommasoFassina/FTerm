@@ -25,6 +25,7 @@ export default function StatusBar() {
   const setAIConfig = useStore(s => s.setAIConfig)
   const setSettings = useStore(s => s.setSettings)
   const setActiveView = useStore(s => s.setActiveView)
+  const setPendingWidget = useStore(s => s.setPendingWidget)
   const claudeStatusline = useStore(s => s.settings.claudeStatusline)
   const activeCwd = tabs.find(t => t.id === activeTabId)?.currentCwd
   const [metrics, setMetrics] = useState({ cpu: 0, ram: 0 })
@@ -124,10 +125,14 @@ export default function StatusBar() {
           {activeCwd && (
             <>
               <Divider />
-              <Segment>
+              <button
+                className="flex items-center gap-1 hover:bg-white/[0.06] rounded px-1 -mx-1 transition-colors cursor-pointer"
+                onClick={() => activeTabId && setPendingWidget({ type: 'file-explorer', data: { path: activeCwd }, tabId: activeTabId })}
+                title="Open file explorer here"
+              >
                 <span className="text-white/25">cwd</span>
                 <span className="text-white/50 font-mono">{truncateCwd(activeCwd)}</span>
-              </Segment>
+              </button>
             </>
           )}
           {statuslineText && (
@@ -216,10 +221,14 @@ export default function StatusBar() {
         {activeCwd && (
           <>
             <Divider />
-            <Segment>
+            <button
+              className="flex items-center gap-1 hover:bg-white/[0.06] rounded px-1 -mx-1 transition-colors cursor-pointer"
+              onClick={() => activeTabId && setPendingWidget({ type: 'file-explorer', data: { path: activeCwd }, tabId: activeTabId })}
+              title="Open file explorer here"
+            >
               <span className="text-white/25">cwd</span>
               <span className="text-white/50 font-mono">{truncateCwd(activeCwd)}</span>
-            </Segment>
+            </button>
           </>
         )}
 
