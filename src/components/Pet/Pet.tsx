@@ -19,12 +19,22 @@ export default function Pet() {
   const [bubble, setBubble] = useState<string | null>(null)
   const [prevState, setPrevState] = useState<PetState>(petState)
   const [shaking, setShaking] = useState(false)
+  const [levelUpBadge, setLevelUpBadge] = useState(false)
+  const prevLevelRef = useRef(pet.level)
   const lastInteractionRef = useRef(Date.now())
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressStateBubbleRef = useRef(false)
   const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const sprites = SPRITES[pet.type]
+
+  useEffect(() => {
+    if (pet.level > prevLevelRef.current) {
+      setLevelUpBadge(true)
+      setTimeout(() => setLevelUpBadge(false), 2500)
+    }
+    prevLevelRef.current = pet.level
+  }, [pet.level])
 
   // Animate sprite frames
   useEffect(() => {
@@ -209,6 +219,22 @@ export default function Pet() {
             className="relative bg-[#161b22] border border-[#30363d] rounded-xl px-3 py-2 text-[11px] text-[#c9d1d9] max-w-[200px] text-right shadow-lg leading-snug"
           >
             {bubble}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Level-up badge */}
+      <AnimatePresence>
+        {levelUpBadge && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.8 }}
+            transition={{ duration: 0.25 }}
+            className="text-[10px] font-bold text-[#f0c040] text-right mr-0.5 pointer-events-none"
+            style={{ filter: 'drop-shadow(0 0 4px rgba(240,192,64,0.8))' }}
+          >
+            +1 LVL
           </motion.div>
         )}
       </AnimatePresence>

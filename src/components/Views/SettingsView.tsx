@@ -1,13 +1,13 @@
 ﻿import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { useStore, THEMES, DEFAULT_KEYBINDINGS } from '@/store'
+import { useStore, DEFAULT_KEYBINDINGS } from '@/store'
 import { useAI } from '@/hooks/useAI'
 import type { AIProvider, QuickAction } from '@/types'
 
-type Tab = 'general' | 'theme' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
+type Tab = 'general' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
 
 const TAB_COMPONENTS: Record<Tab, JSX.Element> = {
-  general: <GeneralTab />, theme: <ThemeTab />, ai: <AITab />, pet: <PetTab />, stats: <StatsTab />,
+  general: <GeneralTab />, ai: <AITab />, pet: <PetTab />, stats: <StatsTab />,
   shortcuts: <ShortcutsTab />, remote: <RemoteTab />,
 }
 
@@ -29,7 +29,7 @@ export default function SettingsView() {
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden gap-4 md:gap-6">
         {/* Sidebar Nav */}
         <div className="w-full md:w-40 shrink-0 flex flex-row md:flex-col gap-0.5 overflow-x-auto pb-2 md:pb-0 no-scrollbar">
-          {(['general', 'theme', 'ai', 'pet', 'stats', 'shortcuts', 'remote'] as Tab[]).map(t => (
+          {(['general', 'ai', 'pet', 'stats', 'shortcuts', 'remote'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setSettings({ activeSettingsTab: t })}
@@ -211,6 +211,9 @@ function GeneralTab() {
         <Row label="Show recording button">
           <Toggle value={settings.showRecordingButton !== false} onChange={v => setSettings({ showRecordingButton: v })} />
         </Row>
+        <Row label="Auto-restart shell on exit">
+          <Toggle value={settings.autoRestartShell === true} onChange={v => setSettings({ autoRestartShell: v })} />
+        </Row>
       </Section>
 
       <Section title="File Explorer">
@@ -229,65 +232,6 @@ function GeneralTab() {
           <button onClick={importSettings} className="btn-secondary flex-1">Import settings</button>
         </div>
       </Section>
-    </div>
-  )
-}
-
-// ─── Theme tab ────────────────────────────────────────────────────────────────
-
-function ThemeTab() {
-  const { activeThemeId, setTheme } = useStore()
-
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-xs text-[#6e7681]">Changes apply instantly. Select a theme to preview.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {THEMES.map(theme => {
-          const isActive = activeThemeId === theme.id
-          return (
-            <button
-              key={theme.id}
-              onClick={() => setTheme(theme.id)}
-              className={`
-                group relative text-left rounded-xl border-2 overflow-hidden transition-all duration-200
-                ${isActive
-                  ? 'border-[#58a6ff] shadow-[0_0_20px_rgba(88,166,255,0.15)]'
-                  : 'border-white/10 hover:border-white/25 hover:shadow-lg'}
-              `}
-            >
-              {/* Terminal preview */}
-              <div
-                className="p-4 font-mono text-[11px] leading-relaxed"
-                style={{ background: theme.background, color: theme.foreground }}
-              >
-                <div className="flex items-center gap-2 mb-3 pb-2 border-b" style={{ borderColor: theme.brightBlack + '40' }}>
-                  <div className="flex gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: theme.red }} />
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: theme.yellow }} />
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: theme.green }} />
-                  </div>
-                  <span className="text-[10px] ml-1" style={{ color: theme.brightBlack }}>{theme.name}</span>
-                  {isActive && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: theme.blue + '30', color: theme.blue }}>Active</span>}
-                </div>
-                <div><span style={{ color: theme.green }}>$</span> <span style={{ color: theme.foreground }}>git status</span></div>
-                <div style={{ color: theme.green }}>On branch <span style={{ color: theme.cyan }}>main</span></div>
-                <div style={{ color: theme.yellow }}>Changes not staged:</div>
-                <div>&nbsp; <span style={{ color: theme.red }}>modified:</span> <span style={{ color: theme.blue }}>src/App.tsx</span></div>
-              </div>
-
-              {/* Color palette */}
-              <div className="flex items-center gap-3 px-4 py-3 bg-black/30">
-                <div className="flex gap-1">
-                  {[theme.red, theme.green, theme.yellow, theme.blue, theme.magenta, theme.cyan].map((c, i) => (
-                    <div key={i} className="w-4 h-4 rounded-[4px] transition-transform group-hover:scale-110" style={{ background: c }} />
-                  ))}
-                </div>
-                <span className="ml-auto text-[10px] font-medium" style={{ color: theme.brightBlack }}>{theme.id}</span>
-              </div>
-            </button>
-          )
-        })}
-      </div>
     </div>
   )
 }

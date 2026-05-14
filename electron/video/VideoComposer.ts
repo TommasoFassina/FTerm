@@ -7,10 +7,16 @@ import { FrameRenderer, RenderOptions } from './FrameRenderer'
 import { detectScenes } from './SceneDetector'
 import type { FrameSnapshot, CommandEvent } from '../../src/services/TerminalRecorder'
 
-console.log('[VideoComposer] ffmpeg path:', ffmpegPath)
-console.log('[VideoComposer] ffprobe path:', ffprobeInstaller.path)
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath)
-ffmpeg.setFfprobePath(ffprobeInstaller.path)
+function unpackedPath(p: string): string {
+  return p.replace(/[\/\\]app\.asar[\/\\]/, '/app.asar.unpacked/')
+}
+
+const resolvedFfmpegPath = ffmpegPath ? unpackedPath(ffmpegPath) : null
+const resolvedFfprobePath = unpackedPath(ffprobeInstaller.path)
+console.log('[VideoComposer] ffmpeg path:', resolvedFfmpegPath)
+console.log('[VideoComposer] ffprobe path:', resolvedFfprobePath)
+if (resolvedFfmpegPath) ffmpeg.setFfmpegPath(resolvedFfmpegPath)
+ffmpeg.setFfprobePath(resolvedFfprobePath)
 
 export interface ComposeOptions {
   snapshots: FrameSnapshot[]

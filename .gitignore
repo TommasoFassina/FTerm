@@ -59,6 +59,7 @@ coverage/
 # ── Claude Code / AI development files ───────────────────────────────────────
 .claude/
 CLAUDE.md
+BACKLOG.md
 .clauderc.json
 .github/copilot-instructions.md
 

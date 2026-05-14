@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'motion/react'
 import { X, ZoomIn, ZoomOut, RotateCcw, Maximize2, Minimize2 } from 'lucide-react'
 
@@ -12,7 +13,10 @@ interface Props {
 export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: Props) {
   const [zoom, setZoom] = useState(1)
   const [floating, setFloating] = useState(false)
-  const [pos, setPos] = useState({ x: 80, y: 60 })
+  const [pos, setPos] = useState(() => ({
+    x: Math.max(40, (window.innerWidth - 520) / 2),
+    y: Math.max(40, (window.innerHeight - 400) / 2),
+  }))
   const [size, setSize] = useState({ w: 520, h: 400 })
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
@@ -104,18 +108,20 @@ export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: 
   )
 
   if (floating) {
-    return (
+    return createPortal(
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
         transition={{ duration: 0.15 }}
-        className="absolute z-40 flex flex-col rounded-lg overflow-hidden shadow-2xl"
+        className="flex flex-col rounded-lg overflow-hidden shadow-2xl"
         style={{
+          position: 'fixed',
           left: pos.x,
           top: pos.y,
           width: size.w,
           height: size.h,
+          zIndex: 9999,
           border: '1px solid rgba(255,255,255,0.12)',
           background: 'rgba(13,17,23,0.97)',
         }}
@@ -136,7 +142,8 @@ export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: 
             <path d="M9 1L1 9M9 5L5 9M9 9" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </div>
-      </motion.div>
+      </motion.div>,
+      document.body
     )
   }
 

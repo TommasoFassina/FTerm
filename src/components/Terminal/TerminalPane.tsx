@@ -26,6 +26,7 @@ import SnippetsWidget from '@/components/Widgets/SnippetsWidget'
 import FtermfetchWidget from '@/components/Widgets/FtermfetchWidget'
 import ImageViewerWidget from '@/components/Widgets/ImageViewerWidget'
 import HistorySearch from './HistorySearch'
+import SearchBar from './SearchBar'
 import { searchAddons, terminalInstances } from './terminalRegistry'
 
 interface Props {
@@ -45,6 +46,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [activeWidget, setActiveWidget] = useState<{ type: string; data?: any } | null>(null)
   const [showHistorySearch, setShowHistorySearch] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
   const [scrollInfo, setScrollInfo] = useState({ viewportY: 0, baseY: 0, rows: 0 })
   const errorMarkersRef = useRef<Array<{ id: number; line: number; getContext: () => string }>>([])
   const [errorVer, setErrorVer] = useState(0)
@@ -58,6 +60,8 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const currentInputRef = useRef<string>('')
   const autocompleteRef = useRef<any>(null)
   const acUiRef = useRef<HTMLDivElement>(null)
+  const ptyExitedRef = useRef(false)
+  const restartPtyRef = useRef<(() => void) | null>(null)
   const selectionAnchorRef = useRef<{ col: number; row: number } | null>(null)
   const selectionCursorRef = useRef<{ col: number; row: number } | null>(null)
 
@@ -71,9 +75,11 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const setAIConfig = useStore(s => s.setAIConfig)
   const setTabBell = useStore(s => s.setTabBell)
   const updateTabCwd = useStore(s => s.updateTabCwd)
+  const setTabOscTitle = useStore(s => s.setTabOscTitle)
   const recordTerminalError = useStore(s => s.recordTerminalError)
   const pendingWidget = useStore(s => s.pendingWidget)
   const setPendingWidget = useStore(s => s.setPendingWidget)
+  const setClaudeCodeStats = useStore(s => s.setClaudeCodeStats)
   const currentProfile = profiles.find(p => p.id === profileId)
   const instanceId = `${tabId}-${paneId}`
 
@@ -250,9 +256,31 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         setTimeout(() => term.write(history), 0)
       }
 
-      removePtyExit = window.fterm.onPtyExit(instanceId, sessionId, code => {
-        term.write(`\r\n\x1b[31mProcess exited (${code}).\x1b[0m Press any key to restart.\r\n`)
-      })
+      const setupPtyExit = (sid: number) => {
+        removePtyExit()
+        removePtyExit = window.fterm.onPtyExit(instanceId, sid, code => {
+          ptyExitedRef.current = true
+          if (useStore.getState().settings.autoRestartShell) {
+            restartPtyRef.current?.()
+          } else {
+            termRef.current?.write(`\r\n\x1b[31mProcess exited (${code}).\x1b[0m Press any key to restart.\r\n`)
+          }
+        })
+      }
+
+      const doRestartPty = () => {
+        ptyExitedRef.current = false
+        const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd
+        const t = termRef.current
+        if (!t) return
+        window.fterm.ptyCreate(instanceId, t.cols, t.rows, currentProfile?.shell, currentProfile?.args, cwd, currentProfile?.env).then(({ pid, sessionId: newSid, cwd: newCwd }) => {
+          setTabPid(tabId, paneId, pid)
+          if (newCwd) updateTabCwd(tabId, paneId, newCwd)
+          setupPtyExit(newSid)
+        })
+      }
+      restartPtyRef.current = doRestartPty
+      setupPtyExit(sessionId)
       if (initialCommand && !history) {
         const removeOnce = window.fterm.onPtyData(instanceId, () => {
           removeOnce()
@@ -286,6 +314,31 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       } catch { /* ignore malformed */ }
       return true
     })
+
+    // OSC 0/2: terminal title — Claude CLI sets this during sessions
+    const handleOscTitle = (data: string) => {
+      const title = data.trim()
+      if (title) setTabOscTitle(tabId, title)
+      return true
+    }
+    const osc0Disposable = term.parser.registerOscHandler(0, handleOscTitle)
+    const osc2Disposable = term.parser.registerOscHandler(2, handleOscTitle)
+
+    // OSC 8: hyperlinks — Claude CLI emits file paths and URLs as clickable links
+    ;(term.options as any).linkHandler = {
+      handleLink: (_event: MouseEvent, uri: string) => {
+        try {
+          if (/^file:\/\//i.test(uri)) {
+            let path = uri.replace(/^file:\/\/[^/]*/i, '')
+            path = decodeURIComponent(path)
+            if (/^\/[A-Za-z]:[\\/]/.test(path)) path = path.slice(1)
+            window.fterm.openExternal('file://' + path)
+          } else {
+            window.fterm.openExternal(uri)
+          }
+        } catch { /* ignore */ }
+      }
+    }
 
     const removePtyData = window.fterm.onPtyData(instanceId, rawData => {
       // Detect cls / clear screen sequences (ED2: ESC[2J or ESC[3J) and dispose decorations
@@ -429,6 +482,13 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     };
 
     term.attachCustomKeyEventHandler((e) => {
+      // PTY exited: any keydown restarts the shell
+      if (ptyExitedRef.current && e.type === 'keydown') {
+        ptyExitedRef.current = false
+        restartPtyRef.current?.()
+        return false
+      }
+
       // Ctrl+Shift+K: clear all imgcat-rendered images + scrollback
       if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'K' || e.key === 'k')) {
         e.preventDefault()
@@ -852,6 +912,12 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         setShowHistorySearch(true)
         return false
       }
+
+      // Ctrl+F → buffer search
+      if (e.type === 'keydown' && e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'f') {
+        setShowSearch(true)
+        return false
+      }
       return true;
     });
 
@@ -1027,6 +1093,8 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       removePtyData()
       removePtyExit()
       osc7Disposable.dispose()
+      osc0Disposable.dispose()
+      osc2Disposable.dispose()
       disposeAllDecorations()
       disposables.forEach(d => d.dispose())
       // We DO NOT call window.fterm.ptyKill(instanceId) anymore to persist the PTY backgrounds
@@ -1045,6 +1113,42 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       termRef.current = null
     }
   }, [tabId, paneId]) // useLayoutEffect: runs before paint so terminal is never blank
+
+  // Scan terminal buffer for Claude Code CLI stats when in TUI mode
+  useEffect(() => {
+    if (!inTuiMode) {
+      setClaudeCodeStats(tabId, null)
+      return
+    }
+    const scan = () => {
+      const term = termRef.current
+      if (!term) return
+      const buf = term.buffer.active
+      const rows = term.rows
+      let text = ''
+      for (let i = Math.max(0, rows - 6); i < rows; i++) {
+        const line = buf.getLine(buf.viewportY + i)
+        if (line) text += ' ' + line.translateToString(true)
+      }
+      const costMatch = text.match(/\$([\d]+\.[\d]+)/)
+      const tokInMatch = text.match(/↑\s*([\d,]+)/)
+      const tokOutMatch = text.match(/↓\s*([\d,]+)/)
+      const ctxMatch = text.match(/(\d{1,3})%/)
+      const modelMatch = text.match(/claude-(?:opus|sonnet|haiku)[-\w.]*/i)
+      if (costMatch || tokInMatch) {
+        setClaudeCodeStats(tabId, {
+          cost: costMatch ? parseFloat(costMatch[1]) : null,
+          tokensIn: tokInMatch ? parseInt(tokInMatch[1].replace(/,/g, ''), 10) : 0,
+          tokensOut: tokOutMatch ? parseInt(tokOutMatch[1].replace(/,/g, ''), 10) : 0,
+          contextPct: ctxMatch ? parseInt(ctxMatch[1], 10) : null,
+          model: modelMatch ? modelMatch[0] : null,
+        })
+      }
+    }
+    scan()
+    const timer = setInterval(scan, 2000)
+    return () => clearInterval(timer)
+  }, [inTuiMode, tabId, setClaudeCodeStats])
 
   useEffect(() => {
     if (!active) return
@@ -1073,22 +1177,33 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
 
   // Custom scrollbar drag
   useEffect(() => {
+    let rafId: number | null = null
     const onMouseMove = (e: MouseEvent) => {
       if (!scrollbarDragRef.current || !termRef.current) return
-      const term = termRef.current
-      const { startY, startViewportY } = scrollbarDragRef.current
-      const trackHeight = containerRef.current?.clientHeight ?? 1
-      const totalLines = term.buffer.active.baseY + term.rows
-      const deltaLines = Math.round(((e.clientY - startY) / trackHeight) * totalLines)
-      const target = Math.max(0, Math.min(term.buffer.active.baseY, startViewportY + deltaLines))
-      term.scrollToLine(target)
+      const clientY = e.clientY
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        if (!scrollbarDragRef.current || !termRef.current) return
+        const term = termRef.current
+        const { startY, startViewportY } = scrollbarDragRef.current
+        const trackHeight = containerRef.current?.clientHeight ?? 1
+        const totalLines = term.buffer.active.baseY + term.rows
+        const deltaLines = Math.round(((clientY - startY) / trackHeight) * totalLines)
+        const target = Math.max(0, Math.min(term.buffer.active.baseY, startViewportY + deltaLines))
+        term.scrollToLine(target)
+      })
     }
-    const onMouseUp = () => { scrollbarDragRef.current = null }
+    const onMouseUp = () => {
+      scrollbarDragRef.current = null
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+    }
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
     return () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
+      if (rafId !== null) cancelAnimationFrame(rafId)
     }
   }, [])
 
@@ -1316,6 +1431,17 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           }}
           onClose={() => {
             setShowHistorySearch(false)
+            termRef.current?.focus()
+          }}
+        />
+      )}
+
+      {showSearch && (
+        <SearchBar
+          tabId={tabId}
+          activePaneId={paneId}
+          onClose={() => {
+            setShowSearch(false)
             termRef.current?.focus()
           }}
         />

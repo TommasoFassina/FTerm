@@ -7,6 +7,7 @@ import type {
   GitStatus, Branch, Commit, Remote,
   TerminalStats, DailyActivity,
   FtermfetchConfig, FetchFieldId,
+  ClaudeCodeStats,
 } from '@/types'
 
 // ─── Built-in themes ──────────────────────────────────────────────────────────
@@ -75,6 +76,10 @@ interface FTermState {
   setTabBell: (tabId: string) => void
   clearTabBell: (tabId: string) => void
 
+  // Claude Code CLI stats per tab (runtime, not persisted)
+  claudeCodeStats: Record<string, ClaudeCodeStats | null>
+  setClaudeCodeStats: (tabId: string, stats: ClaudeCodeStats | null) => void
+
   // CWD tracking (persisted per profile)
   profileCwds: Record<string, string>
   updateProfileCwd: (profileId: string, cwd: string) => void
@@ -115,6 +120,7 @@ interface FTermState {
   duplicateTab: (id: string) => void
   setActiveTab: (id: string) => void
   updateTabTitle: (id: string, title: string) => void
+  setTabOscTitle: (id: string, title: string) => void
   reorderTabs: (fromIndex: number, toIndex: number) => void
   setTabPid: (tabId: string, paneId: string, pid: number) => void
 
@@ -446,6 +452,10 @@ export const useStore = create<FTermState>()(
         return { tabBells: next }
       }),
 
+      // Claude Code CLI stats
+      claudeCodeStats: {},
+      setClaudeCodeStats: (tabId, stats) => set(s => ({ claudeCodeStats: { ...s.claudeCodeStats, [tabId]: stats } })),
+
       // CWD tracking
       profileCwds: {},
       updateProfileCwd: (profileId, cwd) => set(s => ({
@@ -634,6 +644,7 @@ export const useStore = create<FTermState>()(
       },
       setActiveTab: (id) => set({ activeTabId: id }),
       updateTabTitle: (id, title) => set(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, title, manualTitle: true } : t) })),
+      setTabOscTitle: (id, title) => set(s => ({ tabs: s.tabs.map(t => t.id === id && !t.manualTitle ? { ...t, title } : t) })),
       reorderTabs: (fromIndex, toIndex) => set(s => {
         const newTabs = [...s.tabs]
         const [removed] = newTabs.splice(fromIndex, 1)
@@ -780,6 +791,13 @@ export const useStore = create<FTermState>()(
       }),
       addPetXp: (amount) => set(s => {
         const { newXp, newLevel, newMaxXp } = applyXp(s.pet.xp, s.pet.level, s.pet.maxXp, amount)
+        if (newLevel > s.pet.level) {
+          setTimeout(() => {
+            useStore.getState().setPetState('celebrating')
+            useStore.getState().setPetMessage(`Level ${newLevel}!`)
+            setTimeout(() => useStore.getState().setPetState('idle'), 5000)
+          }, 0)
+        }
         return { pet: { ...s.pet, xp: newXp, level: newLevel, maxXp: newMaxXp } }
       }),
 

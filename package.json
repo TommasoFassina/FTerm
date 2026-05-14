@@ -100,7 +100,9 @@
       "dist-electron/**/*"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/@ffprobe-installer/**/*"
     ],
     "win": {
       "target": [

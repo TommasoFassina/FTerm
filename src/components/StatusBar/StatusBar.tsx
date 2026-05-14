@@ -27,6 +27,7 @@ export default function StatusBar() {
   const setActiveView = useStore(s => s.setActiveView)
   const setPendingWidget = useStore(s => s.setPendingWidget)
   const claudeStatusline = useStore(s => s.settings.claudeStatusline)
+  const claudeCodeStats = useStore(s => activeTabId ? s.claudeCodeStats[activeTabId] : null)
   const activeCwd = tabs.find(t => t.id === activeTabId)?.currentCwd
   const [metrics, setMetrics] = useState({ cpu: 0, ram: 0 })
   const [statuslineText, setStatuslineText] = useState<string | null>(null)
@@ -143,6 +144,28 @@ export default function StatusBar() {
               </Segment>
             </>
           )}
+          {claudeCodeStats && (
+            <>
+              <Divider />
+              <Segment>
+                <span className="text-[#f78166]/80">◆</span>
+                {claudeCodeStats.model && (
+                  <span className="text-white/40 font-mono">{claudeCodeStats.model}</span>
+                )}
+                {(claudeCodeStats.tokensIn > 0 || claudeCodeStats.tokensOut > 0) && (
+                  <span className="text-white/50 font-mono">
+                    ↑{formatTokens(claudeCodeStats.tokensIn)} ↓{formatTokens(claudeCodeStats.tokensOut)}
+                  </span>
+                )}
+                {claudeCodeStats.contextPct !== null && (
+                  <span className="text-white/30 font-mono">{claudeCodeStats.contextPct}%</span>
+                )}
+                {claudeCodeStats.cost !== null && (
+                  <span className="text-[#3fb950]/70 font-mono">${claudeCodeStats.cost.toFixed(4)}</span>
+                )}
+              </Segment>
+            </>
+          )}
         </div>
         <Segment>
           <span className="text-white/25">CPU {metrics.cpu}%</span>
@@ -237,6 +260,29 @@ export default function StatusBar() {
             <Divider />
             <Segment>
               <span className="text-[#58a6ff]/70 font-mono max-w-[240px] truncate">{statuslineText}</span>
+            </Segment>
+          </>
+        )}
+
+        {claudeCodeStats && (
+          <>
+            <Divider />
+            <Segment>
+              <span className="text-[#f78166]/80">◆</span>
+              {claudeCodeStats.model && (
+                <span className="text-white/40 font-mono">{claudeCodeStats.model}</span>
+              )}
+              {(claudeCodeStats.tokensIn > 0 || claudeCodeStats.tokensOut > 0) && (
+                <span className="text-white/50 font-mono">
+                  ↑{formatTokens(claudeCodeStats.tokensIn)} ↓{formatTokens(claudeCodeStats.tokensOut)}
+                </span>
+              )}
+              {claudeCodeStats.contextPct !== null && (
+                <span className="text-white/30 font-mono">{claudeCodeStats.contextPct}%</span>
+              )}
+              {claudeCodeStats.cost !== null && (
+                <span className="text-[#3fb950]/70 font-mono">${claudeCodeStats.cost.toFixed(4)}</span>
+              )}
             </Segment>
           </>
         )}

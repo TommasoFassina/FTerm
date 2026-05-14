@@ -16,9 +16,17 @@ function fmt(n: number) {
   return String(n)
 }
 
+const SLASH_COMMANDS = [
+  { cmd: '/clear', description: 'Clear chat history' },
+  { cmd: '/fix', description: 'Fix the last terminal error' },
+  { cmd: '/explain', description: 'Explain the last command' },
+  { cmd: '/model', description: 'Switch model: /model <name>' },
+]
+
 export default function AISidebar() {
   const ai = useStore(s => s.ai)
   const chatMessages = useStore(s => s.chatMessages)
+  const commandHistory = useStore(s => s.commandHistory)
   const settings = useStore(s => s.settings)
   const usage = useStore(s => s.usage)
   const clearChat = useStore(s => s.clearChat)
@@ -33,6 +41,10 @@ export default function AISidebar() {
 
   const isOpen = ai.sidebarOpen
   const hasProvider = ai.provider !== 'none'
+
+  const slashHints = input.startsWith('/')
+    ? SLASH_COMMANDS.filter(s => s.cmd.startsWith(input.split(' ')[0].toLowerCase()))
+    : []
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -49,9 +61,48 @@ export default function AISidebar() {
 
   async function handleSend() {
     const text = input.trim()
-    if (!text || sending || !hasProvider) return
+    if (!text) return
     setInput('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
+
+    // Slash command dispatch
+    if (text.startsWith('/')) {
+      const [cmd, ...args] = text.split(' ')
+      switch (cmd.toLowerCase()) {
+        case '/clear':
+          clearChat()
+          return
+        case '/model': {
+          const name = args.join(' ').trim()
+          if (name) { setAIConfig({ model: name }); return }
+          break
+        }
+        case '/fix': {
+          const last = commandHistory.slice(-3).join('\n')
+          const prompt = last
+            ? `Fix the error from this terminal session. Recent commands:\n\`\`\`\n${last}\n\`\`\``
+            : 'Fix the last error in my terminal.'
+          if (!hasProvider || sending) return
+          setSending(true)
+          try { streamingId.current = await sendMessage(prompt) ?? null }
+          finally { setSending(false); streamingId.current = null }
+          return
+        }
+        case '/explain': {
+          const last = commandHistory[commandHistory.length - 1]
+          const prompt = last
+            ? `Explain what this command does:\n\`\`\`\n${last}\n\`\`\``
+            : 'Explain the last command I ran in the terminal.'
+          if (!hasProvider || sending) return
+          setSending(true)
+          try { streamingId.current = await sendMessage(prompt) ?? null }
+          finally { setSending(false); streamingId.current = null }
+          return
+        }
+      }
+    }
+
+    if (!hasProvider || sending) return
     setSending(true)
     try {
       const id = await sendMessage(text)
@@ -157,6 +208,20 @@ export default function AISidebar() {
 
           {/* Input */}
           <div className="px-4 pb-4 shrink-0">
+            {slashHints.length > 0 && (
+              <div className="mb-1 rounded-lg border border-white/10 bg-[#0d1117] overflow-hidden">
+                {slashHints.map(h => (
+                  <button
+                    key={h.cmd}
+                    onMouseDown={e => { e.preventDefault(); setInput(h.cmd + ' '); textareaRef.current?.focus() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-white/5 text-left"
+                  >
+                    <span className="text-[#58a6ff] font-mono">{h.cmd}</span>
+                    <span className="text-[#6e7681]">{h.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className={`flex gap-2 items-end rounded-xl border transition-all ${hasProvider ? 'border-white/20 bg-black/40 focus-within:border-[#58a6ff] focus-within:bg-black/60 shadow-inner' : 'border-white/5 bg-black/20 opacity-50'
               }`}>
               <textarea

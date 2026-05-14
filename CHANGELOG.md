@@ -5,6 +5,8 @@ All notable changes to FTerm are documented here.
 ## [Unreleased]
 
 ### Added
+- **Claude Code CLI stats in status bar** — while `claude` CLI runs in TUI mode, FTerm scans the terminal buffer every 2 s and extracts model name, token counts (↑↓), context window %, and cost. Displayed as a live segment in the status bar (works with any AI provider setting, including "none").
+- **Shell auto-restart on exit** — new setting (General → Terminal → "Auto-restart shell on exit"). When enabled, the shell process respawns immediately in the same CWD whenever it exits. When disabled, pressing any key after "Process exited" now actually restarts the shell (previously the message appeared but keypresses had no effect).
 - **CWD click opens file explorer** — clicking the `cwd` segment in the status bar opens the file explorer widget at the current working directory of the active tab.
 - **Image files open in viewer from file explorer** — clicking an image file (`png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `ico`, `svg`) inside the file explorer widget now opens it in the built-in image viewer overlay instead of launching the OS default viewer.
 - **Floating/draggable image viewer** — image viewer has a new toggle button (Minimize2 icon) to switch between fullscreen overlay mode and a floating draggable window. In floating mode the window can be repositioned by dragging its header and resized via the bottom-right corner handle.

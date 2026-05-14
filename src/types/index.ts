@@ -47,6 +47,14 @@ export interface Theme {
   brightBlue: string; brightMagenta: string; brightCyan: string; brightWhite: string
 }
 
+export interface ClaudeCodeStats {
+  tokensIn: number
+  tokensOut: number
+  cost: number | null
+  contextPct: number | null
+  model: string | null
+}
+
 export type PetState =
   | 'idle' | 'happy' | 'sad' | 'working' | 'sleeping' | 'celebrating' | 'worried'
 
@@ -191,7 +199,7 @@ export interface AppSettings {
   explorerOpenInTerminal?: boolean
   terminalTextEditor?: string
   settingsPanelOpen: boolean
-  activeSettingsTab?: 'general' | 'theme' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
+  activeSettingsTab?: 'general' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
   hasSeenWelcome?: boolean
   layout?: {
     navSidebarPosition: 'left' | 'right' | 'hidden'
@@ -208,6 +216,7 @@ export interface AppSettings {
     command: string
     pollInterval: number  // ms, default 3000
   }
+  autoRestartShell?: boolean
 }
 
 export interface GitStatus {
