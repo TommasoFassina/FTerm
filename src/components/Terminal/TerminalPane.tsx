@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -34,6 +34,13 @@ interface Props {
   paneId: string
   active: boolean
   profileId?: string
+}
+
+function normalizeClaudeModel(raw: string): string {
+  const s = raw.toLowerCase().replace(/\s+/g, '-')
+  if (s.startsWith('claude-')) return s
+  // Map short display names: "sonnet-4.6" → "claude-sonnet-4-6"
+  return 'claude-' + s.replace(/\./g, '-')
 }
 
 export default function TerminalPane({ tabId, paneId, active, profileId }: Props) {
@@ -80,6 +87,10 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const pendingWidget = useStore(s => s.pendingWidget)
   const setPendingWidget = useStore(s => s.setPendingWidget)
   const setClaudeCodeStats = useStore(s => s.setClaudeCodeStats)
+  const addClaudeCodeCost = useStore(s => s.addClaudeCodeCost)
+  const claudeCodeStats = useStore(s => s.claudeCodeStats[tabId] ?? null)
+  const claudeCodeStatsRef = useRef(claudeCodeStats)
+  claudeCodeStatsRef.current = claudeCodeStats
   const currentProfile = profiles.find(p => p.id === profileId)
   const instanceId = `${tabId}-${paneId}`
 
@@ -224,6 +235,12 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     const onBlurHandler = () => { if (window.__ftermActiveTerminal === term) window.__ftermActiveTerminal = null }
     term.textarea?.addEventListener('focus', onFocusHandler)
     term.textarea?.addEventListener('blur', onBlurHandler)
+
+    if (!window.__ftermTerminalWrite) window.__ftermTerminalWrite = new Map()
+    window.__ftermTerminalWrite.set(tabId, (data: string) => {
+      term.focus()
+      window.fterm.ptyWrite(instanceId, data)
+    })
 
     if (active) {
       setTimeout(() => { term.focus(); window.__ftermActiveTerminal = term }, 50)
@@ -977,9 +994,13 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         const inputNow = currentInputRef.current;
         if (inputNow.length > 1) {
           const history = useStore.getState().commandHistory;
-          const histMatch = [...history].reverse().find(
-            cmd => cmd !== inputNow && cmd.toLowerCase().startsWith(inputNow.toLowerCase())
-          );
+          const inputLower = inputNow.toLowerCase();
+          let histMatch: string | undefined;
+          for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i] !== inputNow && history[i].toLowerCase().startsWith(inputLower)) {
+              histMatch = history[i]; break;
+            }
+          }
           if (histMatch) {
             const cursorEl = term.element?.querySelector('.xterm-cursor-layer .xterm-cursor');
             if (cursorEl) {
@@ -1100,6 +1121,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       // We DO NOT call window.fterm.ptyKill(instanceId) anymore to persist the PTY backgrounds
       term.textarea?.removeEventListener('focus', onFocusHandler)
       term.textarea?.removeEventListener('blur', onBlurHandler)
+      window.__ftermTerminalWrite?.delete(tabId)
       searchAddons.delete(instanceId)
       terminalInstances.delete(instanceId)
       pluginManager.unregisterTerminal(instanceId)
@@ -1114,41 +1136,61 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     }
   }, [tabId, paneId]) // useLayoutEffect: runs before paint so terminal is never blank
 
-  // Scan terminal buffer for Claude Code CLI stats when in TUI mode
+  // Scan terminal buffer for Claude Code CLI stats — runs always, not gated on TUI mode.
+  // Claude Code CLI may or may not use alt-screen on Windows/ConPTY; scanning both the
+  // visible viewport (TUI mode) and recent scrollback (interactive mode) covers both cases.
   useEffect(() => {
-    if (!inTuiMode) {
-      setClaudeCodeStats(tabId, null)
-      return
-    }
     const scan = () => {
       const term = termRef.current
       if (!term) return
       const buf = term.buffer.active
       const rows = term.rows
+
+      // Scan full visible viewport — Claude Code on Windows uses cursor-movement rendering
+      // (no alt-screen), so content is distributed across the viewport, not the last N lines.
       let text = ''
-      for (let i = Math.max(0, rows - 6); i < rows; i++) {
+      for (let i = 0; i < rows; i++) {
         const line = buf.getLine(buf.viewportY + i)
         if (line) text += ' ' + line.translateToString(true)
       }
-      const costMatch = text.match(/\$([\d]+\.[\d]+)/)
+
+      // Currency: match $, €, and garbled ConPTY UTF-8 representations of € (Ôé¼, â‚¬, etc.)
+      // Currency: $, €, and garbled ConPTY UTF-8 variants
+      const costMatch = text.match(/(?:[$€]|Ôé¼|â‚¬)([\d]+\.[\d]+)/)
+      // Tokens: ↑↓ arrows
       const tokInMatch = text.match(/↑\s*([\d,]+)/)
       const tokOutMatch = text.match(/↓\s*([\d,]+)/)
-      const ctxMatch = text.match(/(\d{1,3})%/)
-      const modelMatch = text.match(/claude-(?:opus|sonnet|haiku)[-\w.]*/i)
-      if (costMatch || tokInMatch) {
+      // Context %: only when paired with context-related keyword
+      const ctxMatch = text.match(/(\d{1,3})%\s*(?:context|used|ctx)/) ??
+                       text.match(/(?:context|ctx)[^%\n]{0,30}?(\d{1,3})%/)
+      // Model: full API name OR short display name (Sonnet 4.6, Opus 4.7, Haiku 4.5)
+      const modelMatch = text.match(/claude-(?:opus|sonnet|haiku)[-\w.]*/i) ??
+                         text.match(/\b((?:Sonnet|Opus|Haiku)\s+[\d]+\.[\d]+)/i)
+
+      if (costMatch || tokInMatch || modelMatch) {
+        const prev = claudeCodeStatsRef.current
+        const newCost = costMatch ? parseFloat(costMatch[1]) : null
+        // Normalize short display names to API slugs for cost estimation
+        const rawModel = modelMatch ? (modelMatch[1] ?? modelMatch[0]) : null
+        const model = rawModel ? normalizeClaudeModel(rawModel) : (prev?.model ?? null)
         setClaudeCodeStats(tabId, {
-          cost: costMatch ? parseFloat(costMatch[1]) : null,
-          tokensIn: tokInMatch ? parseInt(tokInMatch[1].replace(/,/g, ''), 10) : 0,
-          tokensOut: tokOutMatch ? parseInt(tokOutMatch[1].replace(/,/g, ''), 10) : 0,
-          contextPct: ctxMatch ? parseInt(ctxMatch[1], 10) : null,
-          model: modelMatch ? modelMatch[0] : null,
+          cost: newCost,
+          tokensIn: tokInMatch ? parseInt(tokInMatch[1].replace(/,/g, ''), 10) : (prev?.tokensIn ?? 0),
+          tokensOut: tokOutMatch ? parseInt(tokOutMatch[1].replace(/,/g, ''), 10) : (prev?.tokensOut ?? 0),
+          contextPct: ctxMatch ? parseInt(ctxMatch[1], 10) : (prev?.contextPct ?? null),
+          model,
         })
+        if (newCost !== null) {
+          const prevCost = prev?.cost ?? 0
+          const delta = newCost - prevCost
+          if (delta > 0) addClaudeCodeCost(delta)
+        }
       }
     }
     scan()
     const timer = setInterval(scan, 2000)
     return () => clearInterval(timer)
-  }, [inTuiMode, tabId, setClaudeCodeStats])
+  }, [inTuiMode, tabId, setClaudeCodeStats, addClaudeCodeCost])
 
   useEffect(() => {
     if (!active) return
@@ -1233,7 +1275,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     }
   }, [])
 
-  const contextMenuItems = [
+  const contextMenuItems = useMemo(() => [
     {
       label: 'Split Right',
       action: () => useStore.getState().splitPane(tabId, paneId, 'horizontal'),
@@ -1289,7 +1331,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       label: 'Clear',
       action: () => termRef.current?.clear(),
     },
-  ]
+  ], [tabId, paneId, sendMessage, setAIConfig])
 
   // Consume pendingWidget from store (e.g. CWD click in StatusBar)
   useEffect(() => {

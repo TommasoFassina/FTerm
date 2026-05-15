@@ -8,6 +8,7 @@ import type {
   TerminalStats, DailyActivity,
   FtermfetchConfig, FetchFieldId,
   ClaudeCodeStats,
+  ClaudeCodeUsage,
 } from '@/types'
 
 // ─── Built-in themes ──────────────────────────────────────────────────────────
@@ -79,6 +80,10 @@ interface FTermState {
   // Claude Code CLI stats per tab (runtime, not persisted)
   claudeCodeStats: Record<string, ClaudeCodeStats | null>
   setClaudeCodeStats: (tabId: string, stats: ClaudeCodeStats | null) => void
+
+  // Claude Code CLI usage (persisted, cost accumulation across sessions)
+  claudeCodeUsage: ClaudeCodeUsage
+  addClaudeCodeCost: (cost: number) => void
 
   // CWD tracking (persisted per profile)
   profileCwds: Record<string, string>
@@ -455,6 +460,31 @@ export const useStore = create<FTermState>()(
       // Claude Code CLI stats
       claudeCodeStats: {},
       setClaudeCodeStats: (tabId, stats) => set(s => ({ claudeCodeStats: { ...s.claudeCodeStats, [tabId]: stats } })),
+
+      // Claude Code CLI usage (persisted cost accumulation)
+      claudeCodeUsage: {
+        sessionCost: 0,
+        dayCost: 0,
+        dayStart: new Date().toISOString().slice(0, 10),
+        weekCost: 0,
+        weekStart: getWeekStart(),
+      },
+      addClaudeCodeCost: (cost) => set(s => {
+        const today = new Date().toISOString().slice(0, 10)
+        const thisWeek = getWeekStart()
+        const prev = s.claudeCodeUsage
+        const resetDay = prev.dayStart !== today
+        const resetWeek = prev.weekStart !== thisWeek
+        return {
+          claudeCodeUsage: {
+            sessionCost: prev.sessionCost + cost,
+            dayCost: (resetDay ? 0 : prev.dayCost) + cost,
+            dayStart: today,
+            weekCost: (resetWeek ? 0 : prev.weekCost) + cost,
+            weekStart: thisWeek,
+          },
+        }
+      }),
 
       // CWD tracking
       profileCwds: {},
@@ -1215,6 +1245,7 @@ export const useStore = create<FTermState>()(
             },
           ])
         ),
+        claudeCodeUsage: { ...s.claudeCodeUsage, sessionCost: 0 },
       }),
     }
   )

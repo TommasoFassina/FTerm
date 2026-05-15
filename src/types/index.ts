@@ -55,6 +55,14 @@ export interface ClaudeCodeStats {
   model: string | null
 }
 
+export interface ClaudeCodeUsage {
+  sessionCost: number
+  dayCost: number
+  dayStart: string
+  weekCost: number
+  weekStart: string
+}
+
 export type PetState =
   | 'idle' | 'happy' | 'sad' | 'working' | 'sleeping' | 'celebrating' | 'worried'
 
@@ -217,6 +225,14 @@ export interface AppSettings {
     pollInterval: number  // ms, default 3000
   }
   autoRestartShell?: boolean
+  statusBar?: {
+    showCpuRam?: boolean
+    showEffort?: boolean
+    showTokens?: boolean
+    showCwd?: boolean
+    showClaudeStats?: boolean
+    showProvider?: boolean
+  }
 }
 
 export interface GitStatus {

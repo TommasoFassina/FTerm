@@ -78,7 +78,9 @@ interface FTermAPI {
   onHistorySearch: (cb: () => void) => () => void
   onPetShake: (cb: () => void) => () => void
   onPetStill: (cb: () => void) => () => void
-  getSystemMetrics: () => Promise<{ cpus: any[], freeMem: number, totalMem: number, platform: string, release: string, hostname: string, username: string, arch: string, uptime: number, shell: string, network: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number } }>
+  getSystemMetrics: () => Promise<{ cpus: any[], freeMem: number, totalMem: number, platform: string, release: string, hostname: string, username: string, arch: string, uptime: number, shell: string, network: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number }, tmpdir: string }>
+  claudeInstallHook: () => Promise<{ statsFile: string; alreadyRegistered: boolean }>
+  claudeHookStatus: () => Promise<{ hookInstalled: boolean; registered: boolean; statsFile: string }>
   pingHost: (host: string, count?: number) => Promise<{ host: string; rtts: number[]; lost: number; avg: number; min: number; max: number; count: number }>
   portScan: (host: string, ports: number[]) => Promise<{ port: number; open: boolean }[]>
   shellDetect: () => Promise<Array<{ id: string; name: string; shell: string; icon: string }>>
@@ -86,7 +88,7 @@ interface FTermAPI {
   fsTempWrite: (filename: string, content: string) => Promise<string>
   fsOpenDialog: () => Promise<string | null>
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]) => Promise<string | null>
-  fsReadFile: (filePath: string) => Promise<string>
+  fsReadFile: (filePath: string) => Promise<string | null>
   fsReadImage: (filePath: string) => Promise<{ mime: string; base64: string; size: number }>
   fsWriteFile: (filePath: string, content: string) => Promise<boolean>
   fsReadDir: (dirPath: string) => Promise<Array<{ name: string; isDir: boolean; size: number }>>
@@ -136,6 +138,7 @@ declare global {
     fterm: FTermAPI
     __ftermLastPetUpdate: number
     __ftermActiveTerminal?: import('@xterm/xterm').Terminal | null
+    __ftermTerminalWrite?: Map<string, (data: string) => void>
   }
 }
 

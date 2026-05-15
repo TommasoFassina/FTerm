@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, protocol, dialog, screen, session } from 'electron'
 import { join } from 'path'
 import { homedir, tmpdir, cpus as osCpus, freemem, totalmem, platform, release, hostname, userInfo, arch, uptime } from 'os'
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { execFile, exec } from 'child_process'
 import { promisify } from 'util'
@@ -12,10 +12,25 @@ const execAsync = promisify(exec)
 // ─── Network stats tracker ────────────────────────────────────────────────────
 let _prevNetBytes: { rx: number; tx: number; ts: number } | null = null
 
+// Cache static system info — these never change at runtime
+const _staticMetrics = {
+  platform: platform(),
+  release: release(),
+  hostname: hostname(),
+  username: userInfo().username,
+  arch: arch(),
+  tmpdir: tmpdir(),
+}
+
+// Cache network delta; spawning PowerShell on every 2s poll is expensive
+let _netCache: { result: { rxKbps: number; txKbps: number; rxTotal: number; txTotal: number }; ts: number } | null = null
+
 async function getNetworkDelta(): Promise<{ rxKbps: number; txKbps: number; rxTotal: number; txTotal: number }> {
+  // Rate-limit to once per 4s — spawning PowerShell every 2s is too expensive
+  if (_netCache && Date.now() - _netCache.ts < 4000) return _netCache.result
   try {
     let rx = 0, tx = 0
-    const plat = platform()
+    const plat = _staticMetrics.platform
     if (plat === 'win32') {
       const { stdout } = await execAsync(
         `powershell -NoProfile -Command "$s=Get-WmiObject Win32_PerfRawData_Tcpip_NetworkInterface; $rx=($s|Measure-Object BytesReceivedPersec -Sum).Sum; $tx=($s|Measure-Object BytesSentPersec -Sum).Sum; \\"$rx $tx\\""`,
@@ -55,7 +70,9 @@ async function getNetworkDelta(): Promise<{ rxKbps: number; txKbps: number; rxTo
       }
     }
     _prevNetBytes = { rx, tx, ts: now }
-    return { rxKbps: Math.round(rxKbps * 10) / 10, txKbps: Math.round(txKbps * 10) / 10, rxTotal: rx, txTotal: tx }
+    const result = { rxKbps: Math.round(rxKbps * 10) / 10, txKbps: Math.round(txKbps * 10) / 10, rxTotal: rx, txTotal: tx }
+    _netCache = { result, ts: Date.now() }
+    return result
   } catch {
     return { rxKbps: 0, txKbps: 0, rxTotal: 0, txTotal: 0 }
   }
@@ -350,14 +367,10 @@ ipcMain.handle('system:metrics', async () => {
     cpus: osCpus(),
     freeMem: freemem(),
     totalMem: totalmem(),
-    platform: platform(),
-    release: release(),
-    hostname: hostname(),
-    username: userInfo().username,
-    arch: arch(),
     uptime: uptime(),
     shell: process.env.SHELL || process.env.ComSpec || '',
     network: net,
+    ..._staticMetrics,
   }
 })
 
@@ -466,12 +479,23 @@ ipcMain.handle('fs:readdir', (_e, dirPath: string) => {
     if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
     const entries = readdirSync(resolved, { withFileTypes: true })
     return entries.map(e => {
+      const entryPath = join(resolved, e.name)
       let size = 0
-      if (!e.isDirectory()) {
-        try { size = statSync(join(dirPath, e.name)).size } catch { /* ignore */ }
+      let isDir = e.isDirectory()
+      if (e.isSymbolicLink()) {
+        // Resolve symlink and verify it stays within allowed roots before following
+        try {
+          const real = realpathSync(entryPath)
+          if (!isPathAllowed(real)) return null
+          const st = statSync(real)
+          isDir = st.isDirectory()
+          size = isDir ? 0 : st.size
+        } catch { return null }
+      } else if (!isDir) {
+        try { size = statSync(entryPath).size } catch { /* ignore */ }
       }
-      return { name: e.name, isDir: e.isDirectory(), size }
-    })
+      return { name: e.name, isDir, size }
+    }).filter(Boolean)
   } catch (err: any) {
     throw new Error(err.message)
   }
@@ -515,8 +539,8 @@ ipcMain.handle('docker:ps', async () => {
 })
 
 ipcMain.handle('docker:logs', async (_e, containerId: string) => {
-  // Validate container ID format (hex or name: alphanumeric, dash, underscore, dot)
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(containerId)) throw new Error('Invalid container ID')
+  // Validate container ID format (hex or name: alphanumeric, dash, underscore, dot); max 64 chars
+  if (typeof containerId !== 'string' || containerId.length > 64 || !/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(containerId)) throw new Error('Invalid container ID')
   try {
     const { stdout, stderr } = await execFileAsync('docker', ['logs', '--tail', '50', containerId])
     return (stdout || '') + (stderr || '')
@@ -526,7 +550,7 @@ ipcMain.handle('docker:logs', async (_e, containerId: string) => {
 })
 
 ipcMain.handle('docker:action', async (_e, id: string, action: 'start' | 'stop') => {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(id)) throw new Error('Invalid container ID')
+  if (typeof id !== 'string' || id.length > 64 || !/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(id)) throw new Error('Invalid container ID')
   if (action !== 'start' && action !== 'stop') throw new Error('Invalid action')
   try {
     await execFileAsync('docker', [action, id])
@@ -706,6 +730,7 @@ ipcMain.handle('fs:readFile', (_e, filePath: string) => {
   if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('Invalid path')
   const resolved = path.resolve(filePath)
   if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
+  if (!existsSync(resolved)) return null
   return readFileSync(resolved, 'utf8')
 })
 
@@ -733,6 +758,158 @@ ipcMain.handle('fs:writeFile', (_e, filePath: string, content: string) => {
   if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
   writeFileSync(resolved, content, 'utf8')
   return true
+})
+
+// ─── Claude Code Hook Installer ───────────────────────────────────────────────
+
+const CLAUDE_HOOK_FILENAME = 'fterm-stats.ps1'
+const FTERM_STATS_FILENAME = 'fterm-claude-stats.json'
+
+const FTERM_HOOK_PS1 = `# FTerm Claude Code Integration — auto-generated, do not edit manually
+param()
+$input_json = $input | Out-String
+try { $data = $input_json | ConvertFrom-Json } catch { exit 0 }
+if (-not $data.session_id) { exit 0 }
+
+$inputTokens = 0; $outputTokens = 0; $cacheRead = 0; $model = $null
+if ($data.transcript_path -and (Test-Path $data.transcript_path)) {
+    Get-Content $data.transcript_path | ForEach-Object {
+        try {
+            $line = $_ | ConvertFrom-Json
+            if ($line.type -eq "assistant" -and $line.message -and $line.message.usage) {
+                $u = $line.message.usage
+                if ($u.input_tokens)            { $inputTokens  += $u.input_tokens }
+                if ($u.output_tokens)           { $outputTokens += $u.output_tokens }
+                if ($u.cache_read_input_tokens) { $cacheRead    += $u.cache_read_input_tokens }
+                if ($line.message.model)        { $model         = $line.message.model }
+            }
+        } catch {}
+    }
+}
+
+@{
+    sessionId = $data.session_id
+    model     = $model
+    tokensIn  = $inputTokens
+    tokensOut = $outputTokens
+    cacheRead = $cacheRead
+    updatedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+} | ConvertTo-Json -Compress | Set-Content "$env:TEMP\\${FTERM_STATS_FILENAME}" -Encoding utf8
+exit 0
+`
+
+const FTERM_HOOK_SH = `#!/usr/bin/env bash
+# FTerm Claude Code Integration — auto-generated, do not edit manually
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null)
+TRANSCRIPT=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('transcript_path',''))" 2>/dev/null)
+[ -z "$SESSION_ID" ] && exit 0
+
+TOKENS_IN=0; TOKENS_OUT=0; CACHE_READ=0; MODEL=""
+if [ -f "$TRANSCRIPT" ]; then
+    while IFS= read -r line; do
+        TYPE=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('type',''))" 2>/dev/null)
+        if [ "$TYPE" = "assistant" ]; then
+            TOKENS_IN=$(( TOKENS_IN + $(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('message',{}).get('usage',{}).get('input_tokens',0))" 2>/dev/null || echo 0) ))
+            TOKENS_OUT=$(( TOKENS_OUT + $(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('message',{}).get('usage',{}).get('output_tokens',0))" 2>/dev/null || echo 0) ))
+            CACHE_READ=$(( CACHE_READ + $(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('message',{}).get('usage',{}).get('cache_read_input_tokens',0))" 2>/dev/null || echo 0) ))
+            M=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('message',{}).get('model',''))" 2>/dev/null)
+            [ -n "$M" ] && MODEL="$M"
+        fi
+    done < "$TRANSCRIPT"
+fi
+
+TMPFILE="\${TMPDIR:-/tmp}/${FTERM_STATS_FILENAME}"
+python3 -c "
+import json,os
+data={'sessionId':'$SESSION_ID','model':'$MODEL','tokensIn':$TOKENS_IN,'tokensOut':$TOKENS_OUT,'cacheRead':$CACHE_READ,'updatedAt':__import__('time').time()*1000}
+open('$TMPFILE','w').write(json.dumps(data))
+" 2>/dev/null
+exit 0
+`
+
+ipcMain.handle('claude:installHook', async () => {
+  const path = require('path')
+  const fs = require('fs')
+
+  const claudeDir = path.join(homedir(), '.claude')
+  const hooksDir = path.join(claudeDir, 'hooks')
+  const settingsPath = path.join(claudeDir, 'settings.json')
+  const isWin = platform() === 'win32'
+
+  // Write hook script
+  if (!fs.existsSync(hooksDir)) fs.mkdirSync(hooksDir, { recursive: true })
+
+  if (isWin) {
+    const hookPath = path.join(hooksDir, CLAUDE_HOOK_FILENAME)
+    fs.writeFileSync(hookPath, FTERM_HOOK_PS1, 'utf8')
+  } else {
+    const hookPath = path.join(hooksDir, 'fterm-stats.sh')
+    fs.writeFileSync(hookPath, FTERM_HOOK_SH, 'utf8')
+    fs.chmodSync(hookPath, 0o755)
+  }
+
+  // Patch ~/.claude/settings.json
+  let settings: any = {}
+  if (fs.existsSync(settingsPath)) {
+    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) } catch {}
+  }
+  if (!settings.hooks) settings.hooks = {}
+  if (!settings.hooks.Stop) settings.hooks.Stop = []
+
+  const hookCmd = isWin
+    ? `powershell -ExecutionPolicy Bypass -File "${path.join(hooksDir, CLAUDE_HOOK_FILENAME)}"`
+    : `bash "${path.join(hooksDir, 'fterm-stats.sh')}"`
+
+  // Check if FTerm hook already registered
+  const alreadyRegistered = settings.hooks.Stop.some((group: any) =>
+    Array.isArray(group.hooks) && group.hooks.some((h: any) =>
+      typeof h.command === 'string' && h.command.includes('fterm-stats')
+    )
+  )
+
+  if (!alreadyRegistered) {
+    settings.hooks.Stop.push({
+      hooks: [{
+        type: 'command',
+        command: hookCmd,
+        ...(isWin ? { shell: 'powershell' } : {}),
+      }]
+    })
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8')
+  }
+
+  return {
+    statsFile: path.join(isWin ? process.env.TEMP || tmpdir() : tmpdir(), FTERM_STATS_FILENAME),
+    alreadyRegistered,
+  }
+})
+
+ipcMain.handle('claude:hookStatus', () => {
+  const path = require('path')
+  const fs = require('fs')
+  const isWin = platform() === 'win32'
+  const hookFile = path.join(homedir(), '.claude', 'hooks', isWin ? CLAUDE_HOOK_FILENAME : 'fterm-stats.sh')
+  const settingsPath = path.join(homedir(), '.claude', 'settings.json')
+  const statsFile = path.join(isWin ? process.env.TEMP || tmpdir() : tmpdir(), FTERM_STATS_FILENAME)
+
+  let registered = false
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+      registered = (s.hooks?.Stop ?? []).some((group: any) =>
+        Array.isArray(group.hooks) && group.hooks.some((h: any) =>
+          typeof h.command === 'string' && h.command.includes('fterm-stats')
+        )
+      )
+    } catch {}
+  }
+
+  return {
+    hookInstalled: fs.existsSync(hookFile),
+    registered,
+    statsFile,
+  }
 })
 
 // ─── Temp file write IPC ─────────────────────────────────────────────────────

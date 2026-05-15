@@ -150,6 +150,8 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
     return () => ipcRenderer.removeListener('pet:still', fn)
   },
   getSystemMetrics: () => ipcRenderer.invoke('system:metrics'),
+  claudeInstallHook: () => ipcRenderer.invoke('claude:installHook'),
+  claudeHookStatus: () => ipcRenderer.invoke('claude:hookStatus'),
   pingHost: (host: string, count?: number) => ipcRenderer.invoke('system:ping', host, count),
   portScan: (host: string, ports: number[]) => ipcRenderer.invoke('system:portscan', host, ports),
   shellDetect: () => ipcRenderer.invoke('shell:detect'),

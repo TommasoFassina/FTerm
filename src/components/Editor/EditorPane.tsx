@@ -1,7 +1,7 @@
 import { Editor } from '@monaco-editor/react'
 import '@/monaco-init'
 import { useStore } from '@/store'
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { memo, useMemo, useRef, useState, useEffect } from 'react'
 import { ChevronDown, Play, Code2, FolderOpen, Save, Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -62,6 +62,7 @@ export default function EditorPane({ tabId }: { tabId: string }) {
         if (!filePath) return
         try {
             const fileContent = await window.fterm.fsReadFile(filePath)
+            if (fileContent === null) return
             const ext = filePath.split('.').pop() || ''
             const langMap: Record<string, string> = { js: 'javascript', ts: 'typescript', jsx: 'jsx', tsx: 'tsx', py: 'python', rb: 'ruby', php: 'php', go: 'go', rs: 'rust', sh: 'bash', ps1: 'powershell', html: 'html', css: 'css', json: 'json', md: 'markdown', yaml: 'yaml', yml: 'yaml', xml: 'xml', sql: 'sql' }
             setEditorContent(tabId, fileContent)
@@ -260,9 +261,7 @@ export default function EditorPane({ tabId }: { tabId: string }) {
 
                 {/* Markdown Preview */}
                 {isMarkdown && showPreview && (
-                    <div className="w-1/2 h-full overflow-y-auto border-l border-[#3e3e42] bg-[#1e1e1e] px-8 py-6 text-[#cccccc] text-sm leading-relaxed markdown-preview">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{content}</ReactMarkdown>
-                    </div>
+                    <MarkdownPreview content={content} />
                 )}
             </div>
 
@@ -276,3 +275,13 @@ export default function EditorPane({ tabId }: { tabId: string }) {
         </div>
     )
 }
+
+
+
+const MarkdownPreview = memo(function MarkdownPreview({ content }: { content: string }) {
+    return (
+        <div className="w-1/2 h-full overflow-y-auto border-l border-[#3e3e42] bg-[#1e1e1e] px-8 py-6 text-[#cccccc] text-sm leading-relaxed markdown-preview">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{content}</ReactMarkdown>
+        </div>
+    )
+})

@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'motion/react'
-import { X, ZoomIn, ZoomOut, RotateCcw, Maximize2, Minimize2 } from 'lucide-react'
+import { X, ZoomIn, ZoomOut, RotateCcw, RotateCw, Maximize2, Minimize2, RefreshCw } from 'lucide-react'
 
 interface Props {
   imagePath: string
@@ -12,30 +12,43 @@ interface Props {
 
 export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: Props) {
   const [zoom, setZoom] = useState(1)
+  const [rotation, setRotation] = useState(0)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
   const [floating, setFloating] = useState(false)
   const [pos, setPos] = useState(() => ({
     x: Math.max(40, (window.innerWidth - 520) / 2),
     y: Math.max(40, (window.innerHeight - 400) / 2),
   }))
   const [size, setSize] = useState({ w: 520, h: 400 })
-  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+
+  // window drag (floating mode header)
+  const winDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
+  // image pan (zoomed)
+  const panDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+
   const filename = imagePath.split(/[/\\]/).pop() ?? imagePath
   const src = `data:${mime};base64,${base64}`
+
+  const resetView = () => { setZoom(1); setRotation(0); setPan({ x: 0, y: 0 }) }
+  const changeZoom = (next: number) => { setZoom(next); if (next <= 1) setPan({ x: 0, y: 0 }) }
 
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if (!floating) return
     e.preventDefault()
-    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y }
+    winDragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y }
   }, [floating, pos])
 
+  // window drag + resize listeners
   useEffect(() => {
     if (!floating) return
     const onMove = (e: MouseEvent) => {
-      if (dragRef.current) {
+      if (winDragRef.current) {
+        const newX = winDragRef.current.origX + e.clientX - winDragRef.current.startX
+        const newY = winDragRef.current.origY + e.clientY - winDragRef.current.startY
         setPos({
-          x: dragRef.current.origX + e.clientX - dragRef.current.startX,
-          y: dragRef.current.origY + e.clientY - dragRef.current.startY,
+          x: Math.max(0, Math.min(newX, window.innerWidth - 80)),
+          y: Math.max(0, Math.min(newY, window.innerHeight - 40)),
         })
       }
       if (resizeRef.current) {
@@ -45,11 +58,45 @@ export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: 
         })
       }
     }
-    const onUp = () => { dragRef.current = null; resizeRef.current = null }
+    const onUp = () => { winDragRef.current = null; resizeRef.current = null }
+    const onLeave = () => { winDragRef.current = null; resizeRef.current = null }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mouseleave', onLeave)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('mouseleave', onLeave)
+    }
   }, [floating])
+
+  // image pan listeners (always active, pan only when zoom > 1)
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!panDragRef.current) return
+      setPan({
+        x: panDragRef.current.origX + e.clientX - panDragRef.current.startX,
+        y: panDragRef.current.origY + e.clientY - panDragRef.current.startY,
+      })
+    }
+    const onUp = () => { panDragRef.current = null }
+    const onLeave = () => { panDragRef.current = null }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('mouseleave', onLeave)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('mouseleave', onLeave)
+    }
+  }, [])
+
+  const onImageMouseDown = useCallback((e: React.MouseEvent) => {
+    if (zoom <= 1) return
+    e.preventDefault()
+    e.stopPropagation()
+    panDragRef.current = { startX: e.clientX, startY: e.clientY, origX: pan.x, origY: pan.y }
+  }, [zoom, pan])
 
   const header = (
     <div
@@ -63,19 +110,27 @@ export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: 
     >
       <span className="text-sm font-mono select-none" style={{ color: '#e6edf3' }}>{filename}</span>
       <div className="flex items-center gap-2" onMouseDown={e => e.stopPropagation()}>
-        <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Zoom out">
+        <button onClick={() => changeZoom(Math.max(0.25, zoom - 0.25))} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Zoom out">
           <ZoomOut size={16} />
         </button>
         <span className="text-xs font-mono w-10 text-center" style={{ color: '#8b949e' }}>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Zoom in">
+        <button onClick={() => changeZoom(Math.min(4, zoom + 0.25))} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Zoom in">
           <ZoomIn size={16} />
         </button>
-        <button onClick={() => setZoom(1)} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Reset zoom">
+        <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
+        <button onClick={() => setRotation(r => (r - 90 + 360) % 360)} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Rotate CCW">
           <RotateCcw size={14} />
         </button>
+        <button onClick={() => setRotation(r => (r + 90) % 360)} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Rotate CW">
+          <RotateCw size={14} />
+        </button>
+        <button onClick={resetView} className="p-1 rounded hover:bg-white/10 transition-colors" style={{ color: '#8b949e' }} title="Reset view">
+          <RefreshCw size={14} />
+        </button>
+        <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
         <button
           onClick={() => setFloating(f => !f)}
-          className="p-1 rounded hover:bg-white/10 transition-colors ml-1"
+          className="p-1 rounded hover:bg-white/10 transition-colors"
           style={{ color: '#8b949e' }}
           title={floating ? 'Dock (fullscreen overlay)' : 'Float (draggable window)'}
         >
@@ -89,19 +144,24 @@ export default function ImageViewerWidget({ imagePath, base64, mime, onClose }: 
   )
 
   const imageArea = (
-    <div className="flex-1 overflow-auto flex items-center justify-center p-4">
+    <div
+      className="flex-1 overflow-hidden flex items-center justify-center"
+      style={{ cursor: zoom > 1 ? 'grab' : 'default' }}
+    >
       <img
         src={src}
         alt={filename}
         draggable={false}
+        onMouseDown={onImageMouseDown}
         style={{
-          transform: `scale(${zoom})`,
+          transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`,
           transformOrigin: 'center center',
-          maxWidth: zoom <= 1 ? '100%' : 'none',
-          maxHeight: zoom <= 1 ? '100%' : 'none',
+          maxWidth: '100%',
+          maxHeight: '100%',
           objectFit: 'contain',
           imageRendering: zoom >= 2 ? 'pixelated' : 'auto',
           userSelect: 'none',
+          transition: panDragRef.current ? 'none' : 'transform 0.15s ease',
         }}
       />
     </div>

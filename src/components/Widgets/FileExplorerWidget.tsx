@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useStore } from '@/store'
 
 const EXT_TO_LANG: Record<string, string> = {
@@ -190,6 +190,7 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
     if (settings.explorerOpenInTerminal !== false && TEXT_EXTS.has(ext)) {
       try {
         const content = await window.fterm.fsReadFile(fp)
+        if (content === null) return
         const lang = EXT_TO_LANG[ext] ?? 'plaintext'
         addEditorTab(content, lang, fp)
         onClose()
@@ -222,9 +223,11 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
   const canBack = historyIdxRef.current > 0
   const canForward = historyIdxRef.current < historyRef.current.length - 1
 
-  const folders = files.filter(f => f.type === 'folder').sort((a, b) => a.name.localeCompare(b.name))
-  const fileEntries = files.filter(f => f.type === 'file').sort((a, b) => a.name.localeCompare(b.name))
-  const sorted = [...folders, ...fileEntries]
+  const { sorted, folderCount, fileCount } = useMemo(() => {
+    const folders = files.filter(f => f.type === 'folder').sort((a, b) => a.name.localeCompare(b.name))
+    const fileEntries = files.filter(f => f.type === 'file').sort((a, b) => a.name.localeCompare(b.name))
+    return { sorted: [...folders, ...fileEntries], folderCount: folders.length, fileCount: fileEntries.length }
+  }, [files])
 
   return (
     <motion.div
@@ -366,8 +369,8 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
 
         {/* Footer */}
         <div className="px-4 py-1.5 border-t border-white/10 bg-white/4 text-xs text-white/35 flex gap-4 shrink-0">
-          <span>{folders.length} folders</span>
-          <span>{fileEntries.length} files</span>
+          <span>{folderCount} folders</span>
+          <span>{fileCount} files</span>
           <span className="ml-auto">Click file to open · Right-click for more · Esc to close</span>
         </div>
       </motion.div>

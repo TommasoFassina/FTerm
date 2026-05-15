@@ -225,6 +225,27 @@ function GeneralTab() {
         </p>
       </Section>
 
+      <Section title="Status Bar">
+        <Row label="CPU / RAM (clickable → sys-mon)">
+          <Toggle value={settings.statusBar?.showCpuRam !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showCpuRam: v } })} />
+        </Row>
+        <Row label="Provider & model">
+          <Toggle value={settings.statusBar?.showProvider !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showProvider: v } })} />
+        </Row>
+        <Row label="Effort picker">
+          <Toggle value={settings.statusBar?.showEffort !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showEffort: v } })} />
+        </Row>
+        <Row label="Token counters">
+          <Toggle value={settings.statusBar?.showTokens !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showTokens: v } })} />
+        </Row>
+        <Row label="CWD">
+          <Toggle value={settings.statusBar?.showCwd !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showCwd: v } })} />
+        </Row>
+        <Row label="Claude Code stats">
+          <Toggle value={settings.statusBar?.showClaudeStats !== false} onChange={v => setSettings({ statusBar: { ...settings.statusBar, showClaudeStats: v } })} />
+        </Row>
+      </Section>
+
       <Section title="Backup">
         <p className="text-xs text-[#6e7681] mb-3">Export or import all visual settings as JSON.</p>
         <div className="flex gap-2">
@@ -348,6 +369,9 @@ function AITab() {
         />
       </Section>
 
+      {/* Claude Code CLI Integration */}
+      <ClaudeCodeIntegrationSection />
+
       {/* Claude CLI Statusline */}
       <ClaudeStatuslineSection />
 
@@ -452,6 +476,61 @@ function QuickActionsEditor() {
   )
 }
 
+function ClaudeCodeIntegrationSection() {
+  const [status, setStatus] = useState<{ hookInstalled: boolean; registered: boolean; statsFile: string } | null>(null)
+  const [installing, setInstalling] = useState(false)
+  const [installed, setInstalled] = useState(false)
+
+  useEffect(() => {
+    window.fterm.claudeHookStatus().then(setStatus).catch(() => {})
+  }, [installed])
+
+  async function install() {
+    setInstalling(true)
+    try {
+      const result = await window.fterm.claudeInstallHook()
+      setInstalled(v => !v) // trigger re-check
+      alert(result.alreadyRegistered
+        ? 'FTerm hook already registered in ~/.claude/settings.json'
+        : 'Hook installed! Restart Claude Code CLI to activate.')
+    } catch (e: any) {
+      alert('Install failed: ' + e.message)
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  const isReady = status?.hookInstalled && status?.registered
+
+  return (
+    <Section title="Claude Code CLI Integration">
+      <p className="text-xs text-[#6e7681] mb-3">
+        Installs a Stop hook in <code className="text-white/50">~/.claude/hooks/</code> that writes real-time session stats to a temp file. FTerm reads it every 2s — shows tokens, cost, and model in the status bar even outside TUI mode.
+      </p>
+      <div className="flex items-center gap-3 mb-3">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${isReady ? 'bg-green-500' : 'bg-yellow-500/80'}`} />
+        <span className="text-xs text-white/50">
+          {isReady ? 'Hook active — stats update after each Claude response' : status === null ? 'Checking...' : 'Hook not installed'}
+        </span>
+      </div>
+      {!isReady && (
+        <button
+          onClick={install}
+          disabled={installing}
+          className="btn-secondary text-xs"
+        >
+          {installing ? 'Installing...' : 'Install FTerm hook'}
+        </button>
+      )}
+      {isReady && status?.statsFile && (
+        <p className="text-[10px] text-white/25 font-mono mt-1 truncate" title={status.statsFile}>
+          Stats file: {status.statsFile}
+        </p>
+      )}
+    </Section>
+  )
+}
+
 const PRESET_STATUSLINE_COMMANDS = [
   { label: 'Caveman badge', command: 'powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\\.claude\\plugins\\cache\\caveman\\caveman\\84cc3c14fa1e\\hooks\\caveman-statusline.ps1"' },
   { label: 'Git branch', command: 'git -C %CD% rev-parse --abbrev-ref HEAD 2>nul' },
@@ -478,7 +557,7 @@ function ClaudeStatuslineSection() {
       const homedir = window.fterm.homedir
       const path = `${homedir}\\.claude\\settings.json`
       const text = await window.fterm.fsReadFile(path)
-      setSettingsJson(text)
+      setSettingsJson(text ?? '{}')
     } catch {
       setSettingsJson('{}')
     }
@@ -930,7 +1009,7 @@ function OllamaSection() {
 
   useEffect(() => {
     if (status?.connected) fetchModels()
-  }, [status?.connected])
+  }, [status?.connected, ai.ollamaUrl])
 
   return (
     <Section title="Ollama (local)">

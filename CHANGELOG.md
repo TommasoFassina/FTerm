@@ -4,6 +4,21 @@ All notable changes to FTerm are documented here.
 
 ## [Unreleased]
 
+### Security
+- **Docker container ID length not bounded:** `docker:logs` and `docker:action` IPC handlers now enforce a 64-character maximum on container IDs in addition to the existing character allowlist.
+- **`fs:readdir` symlink traversal:** directory entries that are symlinks now have their real path resolved via `realpathSync` and checked against the `isPathAllowed` allowlist before being returned. Entries whose targets fall outside the allowlist are silently filtered out, preventing symlink-based escape from allowed roots.
+
+### Performance
+- **Static system metrics cached at startup:** `hostname`, `platform`, `arch`, `release`, `username`, and `tmpdir` are computed once when the main process starts. Previously `system:metrics` IPC called these OS APIs on every poll cycle.
+- **Network delta rate-limited to 4 s:** `getNetworkDelta` now caches its result for 4 seconds. On Windows, this prevents spawning a PowerShell/WMI process every 2 s (the status bar poll interval).
+- **StatusBar store subscriptions consolidated:** 14 separate `useStore` subscriptions replaced with a single `useShallow` selector. The component now re-renders only when selected fields change, not on any unrelated store write.
+- **`activeCwd` derived via store selector:** previously computed with `tabs.find()` in the render body on every render; now a proper inline selector evaluated by Zustand.
+- **File explorer sort memoized:** folder/file filtering and `localeCompare` sort (O(n log n)) wrapped in `useMemo` — runs only when the directory listing changes, not on every render.
+- **Terminal context menu memoized:** the context menu items array is now wrapped in `useMemo([tabId, paneId])` instead of being recreated on every render.
+- **Terminal history prefix search optimized:** history autocomplete now iterates from the end with early exit instead of `[...history].reverse().find()`, eliminating the full array copy and redundant `toLowerCase` calls per keystroke.
+- **Markdown preview memoized:** extracted to a `React.memo` component — the remark/GFM parser only re-runs when file content changes, not on any parent re-render.
+- **Ollama model list re-fetched on URL change:** `useEffect` in the Ollama settings section now includes `ai.ollamaUrl` in its dependency array; previously the model list would stale if the user changed the server URL while already connected.
+
 ### Added
 - **Claude Code CLI stats in status bar** — while `claude` CLI runs in TUI mode, FTerm scans the terminal buffer every 2 s and extracts model name, token counts (↑↓), context window %, and cost. Displayed as a live segment in the status bar (works with any AI provider setting, including "none").
 - **Shell auto-restart on exit** — new setting (General → Terminal → "Auto-restart shell on exit"). When enabled, the shell process respawns immediately in the same CWD whenever it exits. When disabled, pressing any key after "Process exited" now actually restarts the shell (previously the message appeared but keypresses had no effect).
