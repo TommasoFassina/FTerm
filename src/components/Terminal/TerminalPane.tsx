@@ -25,6 +25,8 @@ import PortScanWidget from '@/components/Widgets/PortScanWidget'
 import SnippetsWidget from '@/components/Widgets/SnippetsWidget'
 import FtermfetchWidget from '@/components/Widgets/FtermfetchWidget'
 import ImageViewerWidget from '@/components/Widgets/ImageViewerWidget'
+import VisualizerWidget from '@/components/Widgets/VisualizerWidget'
+import ClipboardWidget from '@/components/Widgets/ClipboardWidget'
 import HistorySearch from './HistorySearch'
 import SearchBar from './SearchBar'
 import { searchAddons, terminalInstances } from './terminalRegistry'
@@ -36,13 +38,6 @@ interface Props {
   profileId?: string
 }
 
-function normalizeClaudeModel(raw: string): string {
-  const s = raw.toLowerCase().replace(/\s+/g, '-')
-  if (s.startsWith('claude-')) return s
-  // Map short display names: "sonnet-4.6" → "claude-sonnet-4-6"
-  return 'claude-' + s.replace(/\./g, '-')
-}
-
 export default function TerminalPane({ tabId, paneId, active, profileId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const paneRootRef = useRef<HTMLDivElement>(null)
@@ -52,6 +47,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const canvasRef = useRef<CanvasAddon | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [activeWidget, setActiveWidget] = useState<{ type: string; data?: any } | null>(null)
+  const [vizWidget, setVizWidget] = useState<{ data?: any } | null>(null)
   const [showHistorySearch, setShowHistorySearch] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [scrollInfo, setScrollInfo] = useState({ viewportY: 0, baseY: 0, rows: 0 })
@@ -87,7 +83,6 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const pendingWidget = useStore(s => s.pendingWidget)
   const setPendingWidget = useStore(s => s.setPendingWidget)
   const setClaudeCodeStats = useStore(s => s.setClaudeCodeStats)
-  const addClaudeCodeCost = useStore(s => s.addClaudeCodeCost)
   const claudeCodeStats = useStore(s => s.claudeCodeStats[tabId] ?? null)
   const claudeCodeStatsRef = useRef(claudeCodeStats)
   claudeCodeStatsRef.current = claudeCodeStats
@@ -592,15 +587,11 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       }
 
       // ── Clipboard shortcuts ──────────────────────────────────────────────
-      // Ctrl+Shift+V (cross-platform terminal paste) and Ctrl+V (when no selection
-      // active — preserves ^V literal when user has explicitly Shift-selected text)
-      if (e.type === 'keydown' && e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
-        e.preventDefault()
-        navigator.clipboard.readText().then(text => {
-          if (text) window.fterm.ptyWrite(`${tabId}-${paneId}`, text)
-        }).catch(() => { /* clipboard unavailable */ })
-        return false
-      }
+      // Ctrl+V / Ctrl+Shift+V: do NOT intercept — let xterm handle paste via the
+      // textarea paste event so bracketed paste mode (\x1b[200~...\x1b[201~) is
+      // respected. Intercepting here AND letting the paste event fire causes double
+      // input, and the raw write bypasses bracketed paste mode which confuses apps
+      // like Claude CLI that rely on it (manifests as erased text on paste).
       // Ctrl+Shift+C → copy selection (Ctrl+C alone must remain SIGINT)
       if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
         e.preventDefault()
@@ -883,6 +874,44 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           autocompleteRef.current = null
           return false
         }
+
+        if (input === 'visualizer' || input === 'viz' || input.startsWith('visualizer ') || input.startsWith('viz ')) {
+          e.preventDefault()
+          const argRaw = input.startsWith('visualizer ')
+            ? input.slice(11).trim()
+            : input.startsWith('viz ')
+            ? input.slice(4).trim()
+            : ''
+          const arg = argRaw.replace(/^["']|["']$/g, '')
+          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
+          window.fterm.ptyWrite(instanceId, backspaces)
+          let fullPath: string | undefined
+          if (arg) {
+            const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd
+              || window.fterm.homedir
+            const sep = cwd.includes('\\') ? '\\' : '/'
+            const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(arg)
+            fullPath = isAbs ? arg : (cwd.replace(/[\\/]+$/, '') + sep + arg)
+          }
+          setVizWidget({ data: { path: fullPath } })
+          window.fterm.ptyWrite(instanceId, '\r\n')
+          currentInputRef.current = ''
+          if (ac) updateAcUI(null)
+          autocompleteRef.current = null
+          return false
+        }
+
+        if (input === 'clipboard' || input === 'clip') {
+          e.preventDefault()
+          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
+          window.fterm.ptyWrite(instanceId, backspaces)
+          setActiveWidget({ type: 'clipboard' })
+          window.fterm.ptyWrite(instanceId, '\r\n')
+          currentInputRef.current = ''
+          if (ac) updateAcUI(null)
+          autocompleteRef.current = null
+          return false
+        }
       }
 
       // Ctrl+Tab / Ctrl+Shift+Tab — tab switching, must pass through to window
@@ -941,13 +970,20 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     let acDebounceTimeout: NodeJS.Timeout;
 
     const disposables = [
-      term.onScroll((viewportY) => {
-        setScrollInfo({
-          viewportY,
-          baseY: term.buffer.active.baseY,
-          rows: term.rows,
+      (() => {
+        let scrollRaf: number | null = null
+        return term.onScroll((viewportY) => {
+          if (scrollRaf !== null) return
+          scrollRaf = requestAnimationFrame(() => {
+            scrollRaf = null
+            setScrollInfo({
+              viewportY,
+              baseY: term.buffer.active.baseY,
+              rows: term.rows,
+            })
+          })
         })
-      }),
+      })(),
       term.onData(data => {
         // TUI app active (claude code, vim, etc.): forward raw, skip input tracking + autocomplete + pet
         if (isTUI()) {
@@ -1083,7 +1119,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
               autocompleteRef.current = null;
               updateAcUI(null);
             }
-          }, 300);
+          }, 800);
         } else {
           autocompleteRef.current = null;
           updateAcUI(null);
@@ -1154,43 +1190,33 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         if (line) text += ' ' + line.translateToString(true)
       }
 
-      // Currency: match $, €, and garbled ConPTY UTF-8 representations of € (Ôé¼, â‚¬, etc.)
-      // Currency: $, €, and garbled ConPTY UTF-8 variants
-      const costMatch = text.match(/(?:[$€]|Ôé¼|â‚¬)([\d]+\.[\d]+)/)
-      // Tokens: ↑↓ arrows
-      const tokInMatch = text.match(/↑\s*([\d,]+)/)
-      const tokOutMatch = text.match(/↓\s*([\d,]+)/)
-      // Context %: only when paired with context-related keyword
+      // Hook poll owns tokens/cost/model (transcript-based, reliable).
+      // Viewport scanner is restricted to contextPct — that value is not in the
+      // transcript and can only be read from Claude CLI's on-screen status line.
+      // Matches: "62% context", "context 62%", "62k/1m tokens (6%)", "6% (62k/1m)"
       const ctxMatch = text.match(/(\d{1,3})%\s*(?:context|used|ctx)/) ??
-                       text.match(/(?:context|ctx)[^%\n]{0,30}?(\d{1,3})%/)
-      // Model: full API name OR short display name (Sonnet 4.6, Opus 4.7, Haiku 4.5)
-      const modelMatch = text.match(/claude-(?:opus|sonnet|haiku)[-\w.]*/i) ??
-                         text.match(/\b((?:Sonnet|Opus|Haiku)\s+[\d]+\.[\d]+)/i)
+                       text.match(/(?:context|ctx)[^%\n]{0,30}?(\d{1,3})%/) ??
+                       text.match(/tokens[^%\n]{0,20}?\((\d{1,3})%\)/i) ??
+                       text.match(/\((\d{1,3})%\)[^%\n]{0,20}?tokens/i)
 
-      if (costMatch || tokInMatch || modelMatch) {
+      if (ctxMatch) {
         const prev = claudeCodeStatsRef.current
-        const newCost = costMatch ? parseFloat(costMatch[1]) : null
-        // Normalize short display names to API slugs for cost estimation
-        const rawModel = modelMatch ? (modelMatch[1] ?? modelMatch[0]) : null
-        const model = rawModel ? normalizeClaudeModel(rawModel) : (prev?.model ?? null)
-        setClaudeCodeStats(tabId, {
-          cost: newCost,
-          tokensIn: tokInMatch ? parseInt(tokInMatch[1].replace(/,/g, ''), 10) : (prev?.tokensIn ?? 0),
-          tokensOut: tokOutMatch ? parseInt(tokOutMatch[1].replace(/,/g, ''), 10) : (prev?.tokensOut ?? 0),
-          contextPct: ctxMatch ? parseInt(ctxMatch[1], 10) : (prev?.contextPct ?? null),
-          model,
-        })
-        if (newCost !== null) {
-          const prevCost = prev?.cost ?? 0
-          const delta = newCost - prevCost
-          if (delta > 0) addClaudeCodeCost(delta)
+        const pct = parseInt(ctxMatch[1], 10)
+        if (prev?.contextPct !== pct) {
+          setClaudeCodeStats(tabId, {
+            cost: prev?.cost ?? null,
+            tokensIn: prev?.tokensIn ?? 0,
+            tokensOut: prev?.tokensOut ?? 0,
+            contextPct: pct,
+            model: prev?.model ?? null,
+          })
         }
       }
     }
     scan()
-    const timer = setInterval(scan, 2000)
+    const timer = setInterval(scan, 5000)
     return () => clearInterval(timer)
-  }, [inTuiMode, tabId, setClaudeCodeStats, addClaudeCodeCost])
+  }, [inTuiMode, tabId, setClaudeCodeStats])
 
   useEffect(() => {
     if (!active) return
@@ -1336,7 +1362,11 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   // Consume pendingWidget from store (e.g. CWD click in StatusBar)
   useEffect(() => {
     if (!pendingWidget || pendingWidget.tabId !== tabId || !active) return
-    setActiveWidget({ type: pendingWidget.type, data: pendingWidget.data })
+    if (pendingWidget.type === 'visualizer') {
+      setVizWidget({ data: pendingWidget.data })
+    } else {
+      setActiveWidget({ type: pendingWidget.type, data: pendingWidget.data })
+    }
     setPendingWidget(null)
   }, [pendingWidget, tabId, active, setPendingWidget])
 
@@ -1378,7 +1408,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             terminal={termRef.current}
             tabId={tabId}
             paneId={paneId}
-            widgetEl={activeWidget ? paneRootRef.current : null}
+            widgetEl={(activeWidget || vizWidget) ? paneRootRef.current : null}
             containerEl={paneRootRef.current}
           />
         </div>
@@ -1564,6 +1594,16 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             base64={activeWidget.data?.base64 ?? ''}
             mime={activeWidget.data?.mime ?? 'image/jpeg'}
             onClose={closeWidget}
+          />
+        )}
+        {vizWidget && (
+          <VisualizerWidget key="visualizer" onClose={() => { setVizWidget(null); setTimeout(() => termRef.current?.focus(), 50) }} initialPath={vizWidget.data?.path} />
+        )}
+        {activeWidget?.type === 'clipboard' && (
+          <ClipboardWidget
+            key="clipboard"
+            onClose={closeWidget}
+            onPaste={(text) => window.fterm.ptyWrite(instanceId, text)}
           />
         )}
       </AnimatePresence>

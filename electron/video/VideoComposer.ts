@@ -87,7 +87,7 @@ export async function composeVideo(options: ComposeOptions): Promise<void> {
       .inputOptions([`-framerate ${fps}`])
       .output(outputPath)
       .videoCodec('libx264')
-      .outputOptions(['-pix_fmt yuv420p', '-preset fast', '-crf 23'])
+      .outputOptions(['-pix_fmt yuv420p', '-preset fast', '-crf 23', '-vsync cfr', '-movflags +faststart'])
       .on('progress', (progress: { percent?: number }) => {
         if (onProgress) onProgress(progress.percent || 0)
       })

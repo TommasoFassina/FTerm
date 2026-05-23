@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { motion, AnimatePresence, useAnimationControls } from 'motion/react'
 import { useStore } from '@/store'
 import type { PetState } from '@/types'
 
@@ -12,13 +12,14 @@ export default function Pet() {
   const petState = useStore(s => s.petState)
   const lastActivity = useStore(s => s.lastActivity)
   const petMessage = useStore(s => s.petMessage)
-  const ai = useStore(s => s.ai)
+  const sidebarOpen = useStore(s => s.ai.sidebarOpen)
   const setPetMessage = useStore(s => s.setPetMessage)
   const setPetState = useStore(s => s.setPetState)
   const [frameIdx, setFrameIdx] = useState(0)
   const [bubble, setBubble] = useState<string | null>(null)
   const [prevState, setPrevState] = useState<PetState>(petState)
   const [shaking, setShaking] = useState(false)
+  const beatControls = useAnimationControls()
   const [levelUpBadge, setLevelUpBadge] = useState(false)
   const prevLevelRef = useRef(pet.level)
   const lastInteractionRef = useRef(Date.now())
@@ -117,6 +118,42 @@ export default function Pet() {
     return () => { offShake?.(); offStill?.() }
   }, [pet.type, setPetState])
 
+  // Music rhythm — visualizer dispatches `pet:rhythm` at detected tempo with a
+  // move index; Pet cycles through different moves so it dances, not just bobs.
+  useEffect(() => {
+    const moves: Array<Parameters<typeof beatControls.start>[0]> = [
+      // bounce
+      { scale: [1, 1.18, 1], y: [0, -10, 0], rotate: 0, transition: { duration: 0.32, ease: 'easeOut' } },
+      // sway left-right
+      { x: [0, -6, 6, 0], rotate: [0, -10, 10, 0], y: 0, scale: 1, transition: { duration: 0.4, ease: 'easeInOut' } },
+      // headbang
+      { rotate: [0, 18, -6, 0], y: [0, 4, -2, 0], x: 0, scale: 1, transition: { duration: 0.36, ease: 'easeOut' } },
+      // pop
+      { scale: [1, 1.25, 0.95, 1], y: 0, rotate: 0, x: 0, transition: { duration: 0.36, ease: 'easeOut' } },
+      // shimmy
+      { x: [0, 4, -4, 4, 0], rotate: [0, 4, -4, 4, 0], y: 0, scale: 1, transition: { duration: 0.42, ease: 'easeInOut' } },
+    ]
+    const onRhythm = (e: Event) => {
+      const idx = ((e as CustomEvent<{ move: number }>).detail?.move ?? 0) % moves.length
+      beatControls.start(moves[idx])
+    }
+    const stopVibe = () => {
+      beatControls.stop()
+      beatControls.start({ scale: 1, y: 0, x: 0, rotate: 0, transition: { duration: 0.2 } })
+    }
+    const onBeat = () => {
+      beatControls.start({ scale: [1, 1.3, 1], transition: { duration: 0.25, ease: 'easeOut' } })
+    }
+    window.addEventListener('pet:rhythm', onRhythm as EventListener)
+    window.addEventListener('pet:vibe-off', stopVibe as EventListener)
+    window.addEventListener('pet:beat', onBeat as EventListener)
+    return () => {
+      window.removeEventListener('pet:rhythm', onRhythm as EventListener)
+      window.removeEventListener('pet:vibe-off', stopVibe as EventListener)
+      window.removeEventListener('pet:beat', onBeat as EventListener)
+    }
+  }, [beatControls])
+
   // Easter egg: Konami code → super celebration
   useEffect(() => {
     const sequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a']
@@ -204,7 +241,7 @@ export default function Pet() {
     <div
       id="fterm-pet-overlay"
       className="fixed bottom-12 flex flex-col items-end gap-1 z-50 pointer-events-none select-none transition-all duration-300 ease-out"
-      style={{ right: ai.sidebarOpen ? 'calc(380px + 1.5rem)' : '1.5rem' }}
+      style={{ right: sidebarOpen ? 'calc(380px + 1.5rem)' : '1.5rem' }}
     >
       {/* Speech bubble */}
       <AnimatePresence>
@@ -242,6 +279,8 @@ export default function Pet() {
       {/* Pet name */}
       <div className="text-[10px] text-[#484f58] text-right mr-0.5" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.9))' }}>{pet.name}</div>
 
+      {/* Beat pulse wrapper — animated via beatControls on each beat */}
+      <motion.div animate={beatControls} initial={{ scale: 1, y: 0 }} style={{ transformOrigin: 'bottom center' }}>
       {/* Pet sprite */}
       <motion.div
         animate={
@@ -278,6 +317,7 @@ export default function Pet() {
         onClick={handlePetting}
       >
         {sprite}
+      </motion.div>
       </motion.div>
     </div>
   )

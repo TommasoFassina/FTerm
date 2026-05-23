@@ -17,7 +17,7 @@ const MAX_PTY_BUFFER = 4 * 1024 * 1024 // 4MB per-flush cap to prevent unbounded
 
 let ftermfetchScriptPath: string | null = null
 
-function deployFtermFetch(): string {
+export function deployFtermFetch(): string {
   if (ftermfetchScriptPath !== null) return ftermfetchScriptPath
   try {
     const dir = join(app.getPath('appData'), 'fterm')

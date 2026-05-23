@@ -96,15 +96,16 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
     setLoading(true)
     setError(null)
     window.fterm.fsReadDir(currentPath)
-      .then(entries => {
+      .then(result => {
         if (cancelled) return
-        const mapped: FileEntry[] = entries.map(e => ({
+        const mapped: FileEntry[] = result.entries.map(e => ({
           name: e.name,
           type: e.isDir ? 'folder' : 'file',
           size: e.isDir ? undefined : formatSize(e.size),
           ext: e.isDir ? undefined : e.name.split('.').pop(),
         }))
         setFiles(mapped)
+        setError(result.error ?? null)
         setLoading(false)
       })
       .catch(err => {

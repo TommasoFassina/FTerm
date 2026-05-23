@@ -1,7 +1,13 @@
-import { app, BrowserWindow, ipcMain, shell, protocol, dialog, screen, session } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, protocol, dialog, screen, session, clipboard } from 'electron'
+
+// Register fterm:// as privileged BEFORE app.ready — required for audio/video MediaElementSource,
+// CORS-permitted fetch, and range requests. Must run at module load time.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'fterm', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: false } },
+])
 import { join } from 'path'
 import { homedir, tmpdir, cpus as osCpus, freemem, totalmem, platform, release, hostname, userInfo, arch, uptime } from 'os'
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync, createReadStream } from 'fs'
 import { readFile } from 'fs/promises'
 import { execFile, exec } from 'child_process'
 import { promisify } from 'util'
@@ -134,7 +140,7 @@ function createWindow(): void {
       sandbox: true,            // node-pty runs in main process, preload only uses contextBridge + ipcRenderer
       webSecurity: true,
       allowRunningInsecureContent: false,
-      devTools: false,
+      devTools: process.env.NODE_ENV === 'development',
     },
   })
 
@@ -472,33 +478,45 @@ function isPathAllowed(inputPath: string): boolean {
 }
 
 ipcMain.handle('fs:readdir', (_e, dirPath: string) => {
-  try {
-    const path = require('path')
-    if (typeof dirPath !== 'string' || !path.isAbsolute(dirPath)) throw new Error('Invalid path')
-    const resolved = path.resolve(dirPath)
-    if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
-    const entries = readdirSync(resolved, { withFileTypes: true })
-    return entries.map(e => {
-      const entryPath = join(resolved, e.name)
-      let size = 0
-      let isDir = e.isDirectory()
-      if (e.isSymbolicLink()) {
-        // Resolve symlink and verify it stays within allowed roots before following
-        try {
-          const real = realpathSync(entryPath)
-          if (!isPathAllowed(real)) return null
-          const st = statSync(real)
-          isDir = st.isDirectory()
-          size = isDir ? 0 : st.size
-        } catch { return null }
-      } else if (!isDir) {
-        try { size = statSync(entryPath).size } catch { /* ignore */ }
-      }
-      return { name: e.name, isDir, size }
-    }).filter(Boolean)
-  } catch (err: any) {
-    throw new Error(err.message)
+  const path = require('path')
+  if (typeof dirPath !== 'string' || !path.isAbsolute(dirPath)) {
+    return { entries: [], error: 'Invalid path' }
   }
+  const resolved = path.resolve(dirPath)
+  if (!isPathAllowed(resolved)) {
+    return { entries: [], error: 'Path not allowed' }
+  }
+  let raw: import('fs').Dirent[]
+  try {
+    raw = readdirSync(resolved, { withFileTypes: true }) as import('fs').Dirent[]
+  } catch (err: any) {
+    const code = err?.code as string | undefined
+    const msg =
+      code === 'EPERM' || code === 'EACCES' ? 'Access denied'
+      : code === 'ENOENT' ? 'Folder not found'
+      : code === 'EBUSY' ? 'Folder is busy'
+      : code === 'ENOTDIR' ? 'Not a folder'
+      : (err?.message ?? 'Failed to read folder')
+    return { entries: [], error: msg }
+  }
+  const entries = raw.map(e => {
+    const entryPath = join(resolved, e.name)
+    let size = 0
+    let isDir = e.isDirectory()
+    if (e.isSymbolicLink()) {
+      try {
+        const real = realpathSync(entryPath)
+        if (!isPathAllowed(real)) return null
+        const st = statSync(real)
+        isDir = st.isDirectory()
+        size = isDir ? 0 : st.size
+      } catch { return null }
+    } else if (!isDir) {
+      try { size = statSync(entryPath).size } catch { /* ignore */ }
+    }
+    return { name: e.name, isDir, size }
+  }).filter(Boolean)
+  return { entries }
 })
 
 // ─── Filesystem drives ────────────────────────────────────────────────────────
@@ -714,6 +732,14 @@ ipcMain.handle('fs:openDialog', async () => {
   return result.canceled ? null : result.filePaths[0]
 })
 
+ipcMain.handle('fs:openDirDialog', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  })
+  return result.canceled ? null : result.filePaths[0]
+})
+
 ipcMain.handle('fs:saveDialog', async (_e, defaultName?: string) => {
   if (!mainWindow) return null
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -744,9 +770,10 @@ ipcMain.handle('fs:readImage', (_e, filePath: string) => {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
     webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
   }
-  if (!mime[ext]) throw new Error('Unsupported image type')
+  if (!mime[ext]) return null
+  if (!existsSync(resolved)) return null
   const stat = statSync(resolved)
-  if (stat.size > 10 * 1024 * 1024) throw new Error('Image too large (>10MB)')
+  if (stat.size > 10 * 1024 * 1024) return null
   const data = readFileSync(resolved)
   return { mime: mime[ext], base64: data.toString('base64'), size: data.length }
 })
@@ -1041,6 +1068,59 @@ ipcMain.handle('remote:status', () => {
   return remoteTerminal.getStatus()
 })
 
+// ─── Clipboard history ────────────────────────────────────────────────────────
+
+interface ClipEntry { id: string; text: string; ts: number; pinned?: boolean }
+const CLIP_MAX = 100
+const CLIP_MIN_LEN = 1
+const CLIP_MAX_LEN = 100_000
+let clipHistory: ClipEntry[] = []
+let clipLastSeen: string = ''
+let clipPollTimer: NodeJS.Timeout | null = null
+let clipIdCounter = 0
+const newClipId = () => `clip-${Date.now()}-${++clipIdCounter}`
+
+function pollClipboard(): void {
+  try {
+    const cur = clipboard.readText()
+    if (!cur || cur === clipLastSeen) return
+    clipLastSeen = cur
+    if (cur.length < CLIP_MIN_LEN || cur.length > CLIP_MAX_LEN) return
+    // Move existing identical entry to top instead of duplicating
+    const existingIdx = clipHistory.findIndex(e => e.text === cur)
+    if (existingIdx !== -1) {
+      const [existing] = clipHistory.splice(existingIdx, 1)
+      existing.ts = Date.now()
+      clipHistory.unshift(existing)
+    } else {
+      clipHistory.unshift({ id: newClipId(), text: cur, ts: Date.now() })
+      // Trim non-pinned overflow
+      const pinned = clipHistory.filter(e => e.pinned)
+      const unpinned = clipHistory.filter(e => !e.pinned).slice(0, CLIP_MAX - pinned.length)
+      clipHistory = [...pinned, ...unpinned].sort((a, b) =>
+        (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts
+      )
+    }
+    mainWindow?.webContents.send('clipboard:update')
+  } catch { /* ignore */ }
+}
+
+ipcMain.handle('clipboard:history', () => clipHistory)
+ipcMain.handle('clipboard:write', (_e, text: string) => {
+  clipboard.writeText(text)
+  clipLastSeen = text
+})
+ipcMain.handle('clipboard:pin', (_e, id: string, pinned: boolean) => {
+  const e = clipHistory.find(c => c.id === id)
+  if (e) e.pinned = pinned
+})
+ipcMain.handle('clipboard:delete', (_e, id: string) => {
+  clipHistory = clipHistory.filter(c => c.id !== id)
+})
+ipcMain.handle('clipboard:clear', () => {
+  clipHistory = clipHistory.filter(c => c.pinned)
+})
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
@@ -1057,13 +1137,59 @@ app.whenReady().then(() => {
     if (!path.isAbsolute(resolved) || !isPathAllowed(resolved)) {
       return new Response('Forbidden', { status: 403 })
     }
-    // Only serve image types — this protocol exists to display user-selected images
+    // Serve user-selected images and audio
     const ext = resolved.split('.').pop()?.toLowerCase() ?? ''
-    const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' }
+    const mime: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+      mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg',
+      flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', weba: 'audio/webm', webm: 'audio/webm',
+    }
     if (!mime[ext]) return new Response('Forbidden', { status: 403 })
     try {
-      const data = readFileSync(resolved)
-      return new Response(data, { headers: { 'Content-Type': mime[ext] } })
+      const st = statSync(resolved)
+      const total = st.size
+      const rangeHeader = request.headers.get('range') || request.headers.get('Range')
+      const baseHeaders: Record<string, string> = {
+        'Content-Type': mime[ext],
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+      }
+      const streamToWeb = (start: number, end: number): ReadableStream => {
+        const nodeStream = createReadStream(resolved, { start, end })
+        return new ReadableStream({
+          start(controller) {
+            nodeStream.on('data', (chunk: Buffer | string) => {
+              controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+            })
+            nodeStream.on('end', () => controller.close())
+            nodeStream.on('error', (err) => controller.error(err))
+          },
+          cancel() { nodeStream.destroy() },
+        })
+      }
+      if (rangeHeader) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+        if (!m) return new Response('Range Not Satisfiable', { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+        let start = m[1] === '' ? NaN : parseInt(m[1], 10)
+        let end = m[2] === '' ? NaN : parseInt(m[2], 10)
+        if (isNaN(start) && isNaN(end)) return new Response('Range Not Satisfiable', { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+        if (isNaN(start)) { start = Math.max(0, total - end); end = total - 1 }
+        else if (isNaN(end)) { end = total - 1 }
+        if (start > end || end >= total) return new Response('Range Not Satisfiable', { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+        return new Response(streamToWeb(start, end), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Length': String(end - start + 1),
+          },
+        })
+      }
+      return new Response(streamToWeb(0, total - 1), {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Length': String(total) },
+      })
     } catch {
       return new Response('Not Found', { status: 404 })
     }
@@ -1079,8 +1205,9 @@ app.whenReady().then(() => {
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: fterm: https:",
+    "media-src 'self' blob: fterm:",
     "font-src 'self' data:",
-    "connect-src 'self' https: wss: ws://localhost:* ws://127.0.0.1:*",
+    "connect-src 'self' fterm: https: wss: ws://localhost:* ws://127.0.0.1:*",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "object-src 'none'",
@@ -1091,8 +1218,9 @@ app.whenReady().then(() => {
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: fterm: https:",
+    "media-src 'self' blob: fterm:",
     "font-src 'self' data:",
-    "connect-src 'self' https: wss: ws: http://localhost:* http://127.0.0.1:*",
+    "connect-src 'self' fterm: https: wss: ws: http://localhost:* http://127.0.0.1:*",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "object-src 'none'",
@@ -1109,11 +1237,15 @@ app.whenReady().then(() => {
 
   registerAIHandlers()
   createWindow()
+
+  clipLastSeen = clipboard.readText() || ''
+  clipPollTimer = setInterval(pollClipboard, 800)
 })
 
 app.on('window-all-closed', () => {
   remoteTerminal.stop().catch(() => { })
   clearCopilotToken()
+  if (clipPollTimer) { clearInterval(clipPollTimer); clipPollTimer = null }
   if (process.platform !== 'darwin') app.quit()
 })
 

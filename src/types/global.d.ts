@@ -87,11 +87,12 @@ interface FTermAPI {
   shellExec: (command: string) => Promise<string>
   fsTempWrite: (filename: string, content: string) => Promise<string>
   fsOpenDialog: () => Promise<string | null>
+  fsOpenDirDialog: () => Promise<string | null>
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]) => Promise<string | null>
   fsReadFile: (filePath: string) => Promise<string | null>
   fsReadImage: (filePath: string) => Promise<{ mime: string; base64: string; size: number }>
   fsWriteFile: (filePath: string, content: string) => Promise<boolean>
-  fsReadDir: (dirPath: string) => Promise<Array<{ name: string; isDir: boolean; size: number }>>
+  fsReadDir: (dirPath: string) => Promise<{ entries: Array<{ name: string; isDir: boolean; size: number }>; error?: string }>
   fsDrives: () => Promise<Array<{ path: string; label: string; size: number; freeSpace: number }>>
   dockerPs: () => Promise<any[] | null>
   dockerLogs: (containerId: string) => Promise<string>
@@ -102,6 +103,14 @@ interface FTermAPI {
   recordingStop: (data: { snapshots: any[]; events: any[]; theme: any; fontFamily?: string; backgroundImage?: string; backgroundBlur?: number; backgroundOpacity?: number; generateSubtitlesWith?: string }) => Promise<{ videoPath: string }>
   onRecordingProgress: (cb: (percent: number) => void) => () => void
   captureRect: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
+
+  // Clipboard history
+  clipboardHistory: () => Promise<Array<{ id: string; text: string; ts: number; pinned?: boolean }>>
+  clipboardWrite: (text: string) => Promise<void>
+  clipboardPin: (id: string, pinned: boolean) => Promise<void>
+  clipboardDelete: (id: string) => Promise<void>
+  clipboardClear: () => Promise<void>
+  onClipboardUpdate: (cb: () => void) => () => void
 
   // Remote Terminal
   remoteStart: (port: number) => Promise<{ pin: string; localIp: string; allIps: string[]; qr: string; firewallOk: boolean }>

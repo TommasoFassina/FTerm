@@ -1050,7 +1050,7 @@ function OllamaSection() {
 // --- Shared UI primitives ---
 
 function PetTab() {
-  const { pet, setPetConfig, setPetState, setPetMessage } = useStore()
+  const { pet, setPetConfig, setPetState, setPetMessage, settings, setSettings } = useStore()
   const xpPct = Math.round((pet.xp / pet.maxXp) * 100)
 
   return (
@@ -1058,6 +1058,9 @@ function PetTab() {
       <Section title="Companion settings">
         <Row label="Visible">
           <Toggle value={pet.visible} onChange={v => setPetConfig({ visible: v })} />
+        </Row>
+        <Row label="Vibe to music in visualizer">
+          <Toggle value={settings.vizPetVibe !== false} onChange={v => setSettings({ vizPetVibe: v })} />
         </Row>
 
         {pet.visible && (

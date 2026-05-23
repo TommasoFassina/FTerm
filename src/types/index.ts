@@ -205,6 +205,7 @@ export interface AppSettings {
   showRecordingButton: boolean
   showAIAutoFixButton: boolean
   explorerOpenInTerminal?: boolean
+  vizPetVibe?: boolean
   terminalTextEditor?: string
   settingsPanelOpen: boolean
   activeSettingsTab?: 'general' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'

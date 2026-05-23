@@ -61,11 +61,12 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **Real PTY shell** — full pseudoterminal emulation via `node-pty` and `xterm.js`
 - **Split panes** — horizontal and vertical splits per tab, navigate with `Ctrl+Alt+Arrow`
 - **Multiple tabs** — open, close, and switch terminal tabs
-- **Remote terminal** — connect to remote shells over WebSocket
+- **Remote terminal** — connect to remote shells over WebSocket; full mobile control surface with Term / AI / Tools tabs, sticky modifier key bar, quick-launcher chips, and widget parity (file explorer, system monitor, docker, weather, ping, port scanner, clipboard)
 - **History search** — `Ctrl+R` fuzzy search through command history
 - **Command palette** — `Ctrl+Shift+P` for quick access to any action
 - **Shell profiles** — save named profiles (shell, working directory, env vars, theme)
 - **Keybinding customization** — remap any shortcut in settings
+- **Shell auto-restart** — shell respawns automatically in the same CWD when it exits (configurable in General → Terminal)
 
 ### AI
 - **AI sidebar** — streaming chat with Claude, OpenAI, GitHub Copilot, Gemini, DeepSeek, Ollama
@@ -74,6 +75,7 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **System prompt editor** — built-in personas (Caveman, Pirate, ELI5, Terse…) or write your own
 - **Effort levels** — fast / auto / thorough maps to different model tiers automatically
 - **Code block actions** — run shell code directly in the active terminal, insert at cursor, or save to file from any AI response
+- **Claude Code CLI stats** — while `claude` runs in TUI mode, FTerm extracts live model name, token counts, context window %, and cost; displayed as a live segment in the status bar
 
 ### Widgets
 - **Interactive widgets** — type commands to render rich UI panels inside the terminal (see [Widget Commands](#widget-commands))
@@ -130,6 +132,8 @@ sudo dpkg -i FTerm-x.x.x.deb
 
 Type any of these in the terminal to open an interactive panel. Press **Esc** to close.
 
+> ⚠️ **Photosensitivity notice:** The audio visualizer (`viz`) contains rapidly flashing lights and strobing effects that may trigger seizures or discomfort in people with photosensitive epilepsy. A warning is shown on first use. If sensitive, select the *None* style (audio only, no visuals) or avoid the feature entirely.
+
 | Command | Widget |
 |---|---|
 | `explore [path]` | File Explorer — browse files as an interactive card grid |
@@ -143,6 +147,8 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `ftermfetch` | System Info — customizable neofetch-style card; export as PNG |
 | `snippets` | Snippets Manager — save and insert reusable commands |
 | `imgcat <path>` | Image Viewer — open an image in a full-pane overlay with zoom controls |
+| `viz [path]` | Audio Visualizer — play audio files with 11 real-time visualizer styles, queue management, beat-sync pet ⚠️ |
+| `clipboard` | Clipboard Manager — read / write host clipboard, paste directly to terminal |
 
 ---
 
@@ -418,7 +424,7 @@ src/                             # Renderer (React + TypeScript, no Node access)
 │   └── TerminalRecorder.ts      # Captures terminal snapshots + command events
 └── components/
     ├── Terminal/                 # xterm.js + PTY, split panes, recording controls, history search
-    ├── Widgets/                  # File explorer, sys-mon, docker, weather, ping, port-scan, snippets
+    ├── Widgets/                  # File explorer, sys-mon, docker, weather, ping, port-scan, snippets, audio visualizer, clipboard
     ├── AI/                       # Streaming chat sidebar + message rendering
     ├── Pet/                      # Animated ASCII tamagotchi
     └── Views/                    # Settings, Themes, Plugins, Git, Pet, Profiles, Stats

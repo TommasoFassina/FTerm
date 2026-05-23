@@ -160,6 +160,8 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
     ipcRenderer.invoke('fs:writeTmp', filename, content),
   fsOpenDialog: (): Promise<string | null> =>
     ipcRenderer.invoke('fs:openDialog'),
+  fsOpenDirDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke('fs:openDirDialog'),
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]): Promise<string | null> =>
     ipcRenderer.invoke('fs:saveDialog', defaultName, filters),
   fsReadFile: (filePath: string): Promise<string> =>
@@ -168,7 +170,7 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
     ipcRenderer.invoke('fs:readImage', filePath),
   fsWriteFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
-  fsReadDir: (dirPath: string): Promise<Array<{ name: string; isDir: boolean; size: number }>> =>
+  fsReadDir: (dirPath: string): Promise<{ entries: Array<{ name: string; isDir: boolean; size: number }>; error?: string }> =>
     ipcRenderer.invoke('fs:readdir', dirPath),
   fsDrives: (): Promise<Array<{ path: string; label: string; size: number; freeSpace: number }>> =>
     ipcRenderer.invoke('fs:drives'),
@@ -180,6 +182,19 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
     ipcRenderer.invoke('docker:action', id, action),
   systemProcesses: (): Promise<(string | number)[][]> =>
     ipcRenderer.invoke('system:processes'),
+
+  // ── Clipboard history ──────────────────────────────────────────────────────
+  clipboardHistory: (): Promise<Array<{ id: string; text: string; ts: number; pinned?: boolean }>> =>
+    ipcRenderer.invoke('clipboard:history'),
+  clipboardWrite: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
+  clipboardPin: (id: string, pinned: boolean): Promise<void> => ipcRenderer.invoke('clipboard:pin', id, pinned),
+  clipboardDelete: (id: string): Promise<void> => ipcRenderer.invoke('clipboard:delete', id),
+  clipboardClear: (): Promise<void> => ipcRenderer.invoke('clipboard:clear'),
+  onClipboardUpdate: (cb: () => void) => {
+    const fn = () => cb()
+    ipcRenderer.on('clipboard:update', fn)
+    return () => ipcRenderer.removeListener('clipboard:update', fn)
+  },
 
   // ── Remote Terminal ────────────────────────────────────────────────────────
   remoteStart: (port: number) => ipcRenderer.invoke('remote:start', port),

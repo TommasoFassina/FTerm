@@ -9,9 +9,13 @@ interface ModelPricing {
 
 const PRICING: Record<string, ModelPricing> = {
   // Claude
+  'claude-opus-4-7':             { input: 15.00, output: 75.00 },
   'claude-opus-4-6':             { input: 15.00, output: 75.00 },
+  'claude-opus-4':               { input: 15.00, output: 75.00 },
   'claude-sonnet-4-6':           { input:  3.00, output: 15.00 },
-  'claude-haiku-4-5-20251001':   { input:  0.25, output:  1.25 },
+  'claude-sonnet-4-5':           { input:  3.00, output: 15.00 },
+  'claude-sonnet-4':             { input:  3.00, output: 15.00 },
+  'claude-haiku-4-5':            { input:  0.25, output:  1.25 },
   // OpenAI
   'gpt-4o':                      { input:  2.50, output: 10.00 },
   'gpt-4o-mini':                 { input:  0.15, output:  0.60 },
@@ -19,8 +23,21 @@ const PRICING: Record<string, ModelPricing> = {
   'o1-mini':                     { input:  3.00, output: 12.00 },
 }
 
+function lookupPricing(model: string): ModelPricing | null {
+  if (PRICING[model]) return PRICING[model]
+  // Strip trailing date suffix like "-20251001"
+  const stripped = model.replace(/-\d{8}$/, '')
+  if (PRICING[stripped]) return PRICING[stripped]
+  // Prefix match against known keys (longest first)
+  const keys = Object.keys(PRICING).sort((a, b) => b.length - a.length)
+  for (const k of keys) {
+    if (model.startsWith(k)) return PRICING[k]
+  }
+  return null
+}
+
 export function estimateCost(model: string, inputTokens: number, outputTokens: number): number | null {
-  const pricing = PRICING[model]
+  const pricing = lookupPricing(model)
   if (!pricing) return null
   return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000
 }

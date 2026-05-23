@@ -12,21 +12,19 @@ const nextId = () => `req-${++requestCounter}-${Date.now()}-${Math.random().toSt
 export function useAI() {
   const ai = useStore(s => s.ai)
   const addChatMessage = useStore(s => s.addChatMessage)
-  const updateChatMessage = useStore(s => s.updateChatMessage)
-  const appendChatContent = useStore(s => s.appendChatContent)
   const setProviderStatus = useStore(s => s.setProviderStatus)
-  const recordUsage = useStore(s => s.recordUsage)
 
   // Track which requestIds are in flight
   const pending = useRef(new Set<string>())
 
   useEffect(() => {
+    // Use store.getState() in callbacks to avoid re-subscribing when action refs change
     const removeChunk = window.fterm.onAIChunk((id, text) => {
-      if (pending.current.has(id)) appendChatContent(id, text)
+      if (pending.current.has(id)) useStore.getState().appendChatContent(id, text)
     })
     const removeDone = window.fterm.onAIDone((id) => {
       if (pending.current.has(id)) {
-        updateChatMessage(id, { streaming: false })
+        useStore.getState().updateChatMessage(id, { streaming: false })
         pending.current.delete(id)
         useStore.getState().setPetState('happy')
         useStore.getState().setPetMessage('Done thinking!')
@@ -34,18 +32,18 @@ export function useAI() {
     })
     const removeError = window.fterm.onAIError((id, err) => {
       if (pending.current.has(id)) {
-        updateChatMessage(id, { streaming: false, error: err })
+        useStore.getState().updateChatMessage(id, { streaming: false, error: err })
         pending.current.delete(id)
         useStore.getState().setPetState('sad')
         useStore.getState().setPetMessage('Something went wrong...')
       }
     })
     const removeUsage = window.fterm.onAIUsage((_id, usage) => {
-      recordUsage(usage)
+      useStore.getState().recordUsage(usage)
     })
 
     return () => { removeChunk(); removeDone(); removeError(); removeUsage() }
-  }, [appendChatContent, updateChatMessage, recordUsage])
+  }, [])
 
   const sendMessage = useCallback(async (content: string, provider?: AIProvider): Promise<string | undefined> => {
     const activeProvider = provider ?? ai.provider

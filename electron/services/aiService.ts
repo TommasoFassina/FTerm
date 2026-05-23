@@ -306,6 +306,28 @@ async function streamOllama(sender: Sender, req: AIRequest, signal?: AbortSignal
   } satisfies UsageData)
 }
 
+// ─── External streaming entry point (used by remote terminal server) ────────
+
+/**
+ * Stream an AI request to an arbitrary sender (used by remote terminal server
+ * to forward responses over WebSocket). The sender only needs a .send method.
+ */
+export async function streamAIRequest(
+  sender: Sender,
+  req: AIRequest,
+  signal?: AbortSignal,
+): Promise<void> {
+  switch (req.provider) {
+    case 'claude': await streamClaude(sender, req, signal); break
+    case 'openai':
+    case 'gemini':
+    case 'deepseek': await streamOpenAI(sender, req, signal); break
+    case 'copilot': await streamCopilot(sender, req, signal); break
+    case 'ollama': await streamOllama(sender, req, signal); break
+    default: throw new Error(`Unknown provider: ${req.provider}`)
+  }
+}
+
 // ─── Single-shot helper (for recording subtitle generation) ──────────────────
 
 export async function aiSingleShot(

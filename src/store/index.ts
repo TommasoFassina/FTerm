@@ -528,6 +528,8 @@ export const useStore = create<FTermState>()(
         { id: 'docker', name: 'Docker Dashboard', description: 'Run `docker-dash` to manage containers interactively.', enabled: true },
         { id: 'weather', name: 'Weather Widget', description: 'Run `weather [city]` to display a live weather card.', enabled: true },
         { id: 'data-table', name: 'Data Table', description: 'Run `ps` or `query` to render tabular output as a sortable table.', enabled: true },
+        { id: 'visualizer', name: 'Audio Visualizer', description: 'Run `viz` or `visualizer` to play an audio file with bars/wave/ASCII spectrum visualization.', enabled: true },
+        { id: 'clipboard', name: 'Clipboard History', description: 'Run `clip` or `clipboard` to view, search, pin, and paste from clipboard history.', enabled: true },
       ],
       togglePlugin: (id: string) => set(state => ({
         plugins: state.plugins.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p)
@@ -1127,6 +1129,7 @@ export const useStore = create<FTermState>()(
         showRecordingButton: true,
         showAIAutoFixButton: true,
         explorerOpenInTerminal: true,
+        vizPetVibe: true,
         terminalTextEditor: 'nano',
         settingsPanelOpen: false,
         activeSettingsTab: 'general',

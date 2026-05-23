@@ -156,8 +156,14 @@ export default function StatusBar() {
         if (!activeTabId) return
         const prevCtxPct = claudeCodeStatsRef.current?.contextPct ?? null
 
-        const cost = parsed.tokensIn && parsed.model
-          ? estimateCost(parsed.model, parsed.tokensIn - (parsed.cacheRead ?? 0), parsed.tokensOut)
+        // API `input_tokens` already excludes cached tokens; cache_read priced at 10% input rate.
+        const cost = parsed.model && (parsed.tokensIn || parsed.tokensOut || parsed.cacheRead)
+          ? (() => {
+              const base = estimateCost(parsed.model, parsed.tokensIn ?? 0, parsed.tokensOut ?? 0)
+              if (base === null) return null
+              const cacheCost = estimateCost(parsed.model, parsed.cacheRead ?? 0, 0)
+              return base + (cacheCost !== null ? cacheCost * 0.1 : 0)
+            })()
           : null
         if (cost !== null) {
           const delta = cost - lastStatsCostRef.current
