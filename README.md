@@ -67,6 +67,8 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **Shell profiles** — save named profiles (shell, working directory, env vars, theme)
 - **Keybinding customization** — remap any shortcut in settings
 - **Shell auto-restart** — shell respawns automatically in the same CWD when it exits (configurable in General → Terminal)
+- **SSH host manager** — save SSH connections in Settings → Remote and one-click connect from the command palette; key/agent auth only, no passwords stored
+- **In-app browser** — a built-in hardened web browser as a dedicated tab or `browser` widget; isolated session, ad/tracker blocking, session-only history, granular clear-data controls
 
 ### AI
 - **AI sidebar** — streaming chat with Claude, OpenAI, GitHub Copilot, Gemini, DeepSeek, Ollama
@@ -75,6 +77,7 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **System prompt editor** — built-in personas (Caveman, Pirate, ELI5, Terse…) or write your own
 - **Effort levels** — fast / auto / thorough maps to different model tiers automatically
 - **Code block actions** — run shell code directly in the active terminal, insert at cursor, or save to file from any AI response
+- **AI command builder** (`Ctrl+K`) — describe a task in plain English; the active provider generates a single shell command with terminal context (OS, shell, CWD, git branch), previewed for review before you press Enter
 - **Claude Code CLI stats** — while `claude` runs in TUI mode, FTerm extracts live model name, token counts, context window %, and cost; displayed as a live segment in the status bar
 
 ### Widgets
@@ -149,6 +152,8 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `imgcat <path>` | Image Viewer — open an image in a full-pane overlay with zoom controls |
 | `viz [path]` | Audio Visualizer — play audio files with 11 real-time visualizer styles, queue management, beat-sync pet ⚠️ |
 | `clipboard` | Clipboard Manager — read / write host clipboard, paste directly to terminal |
+| `browser` | Web Browser — hardened in-app browser overlay with ad/tracker blocking and bookmarks |
+| `note` / `notes` | Notes Scratchpad — per-session markdown notes with autosave; optional export to `~/.fterm/notes/` |
 
 ---
 
@@ -164,6 +169,7 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `Ctrl+Shift+O` | Split pane down |
 | `Ctrl+Alt+Arrow` | Navigate between panes |
 | `Ctrl+Shift+A` | Toggle AI sidebar |
+| `Ctrl+K` | AI command builder |
 | `Ctrl+Shift+F` | Search in terminal |
 | `Ctrl+R` | History search (fuzzy) |
 | `Ctrl+Shift+P` | Command palette |

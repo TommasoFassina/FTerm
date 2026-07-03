@@ -5,6 +5,23 @@ export interface Pane {
   shellArgs?: string[]
 }
 
+export interface SshHost {
+  id: string
+  label: string
+  host: string
+  user: string
+  port?: number
+  identityFile?: string
+  extraArgs?: string
+}
+
+export interface Note {
+  id: string
+  title: string
+  body: string
+  updatedAt: number
+}
+
 export interface SplitNode {
   id: string
   type: 'pane' | 'split'
@@ -22,7 +39,9 @@ export interface Tab {
   id: string
   title: string
   color?: string
-  type?: 'terminal' | 'editor'
+  type?: 'terminal' | 'editor' | 'browser'
+  /** Initial URL for a browser tab (the webview tracks live URL internally) */
+  browserUrl?: string
   layout?: SplitNode
   activePaneId?: string
   editorContent?: string
@@ -32,6 +51,20 @@ export interface Tab {
   currentCwd?: string
   /** True when the user has manually renamed this tab — prevents auto-title updates */
   manualTitle?: boolean
+}
+
+export interface Bookmark {
+  id: string
+  title: string
+  url: string
+}
+
+/** A visited page. Session-only — never persisted to disk. */
+export interface BrowserHistoryEntry {
+  id: string
+  title: string
+  url: string
+  visitedAt: number
 }
 
 export interface Theme {
@@ -202,6 +235,8 @@ export interface AppSettings {
   cursorBlink: boolean
   scrollback: number
   copyOnSelect: boolean
+  /** Sync scroll position across all split panes in the active tab */
+  syncPaneScroll?: boolean
   showRecordingButton: boolean
   showAIAutoFixButton: boolean
   explorerOpenInTerminal?: boolean
@@ -234,6 +269,8 @@ export interface AppSettings {
     showClaudeStats?: boolean
     showProvider?: boolean
   }
+  /** In-app browser: auto-update the bundled uBlock Origin Lite from GitHub. Default on. */
+  browserUbolAutoUpdate?: boolean
 }
 
 export interface GitStatus {

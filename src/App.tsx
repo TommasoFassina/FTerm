@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
-import { useStore, useActiveTheme, getOrderedPaneIds, DEFAULT_KEYBINDINGS } from '@/store'
+import { useStore, useActiveTheme, getOrderedPaneIds, DEFAULT_KEYBINDINGS, IS_DETACHED } from '@/store'
 import { useAIInit } from '@/hooks/useAI'
 import Titlebar from '@/components/Titlebar/Titlebar'
 import PaneLayout from '@/components/Terminal/PaneLayout'
@@ -8,6 +8,7 @@ import AISidebar from '@/components/AI/AISidebar'
 import Pet from '@/components/Pet/Pet'
 import StatusBar from '@/components/StatusBar/StatusBar'
 import CommandPalette from '@/components/CommandPalette/CommandPalette'
+import CommandBuilder from '@/components/CommandPalette/CommandBuilder'
 import Sidebar from '@/components/Sidebar/Sidebar'
 import WelcomeOverlay from '@/components/Welcome/WelcomeOverlay'
 import { AnimatePresence, motion } from 'motion/react'
@@ -21,6 +22,7 @@ const PluginsView  = lazy(() => import('@/components/Views/PluginsView'))
 const GitView      = lazy(() => import('@/components/Views/GitView'))
 const PetView      = lazy(() => import('@/components/Views/PetView'))
 const EditorPane   = lazy(() => import('@/components/Editor/EditorPane'))
+const BrowserView  = lazy(() => import('@/components/Browser/BrowserView'))
 
 function matchesBinding(e: KeyboardEvent, binding: string): boolean {
   const parts = binding.toLowerCase().split('+')
@@ -46,6 +48,7 @@ export default function App() {
   const activeTheme = useActiveTheme()
   const [searchOpen, setSearchOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [builderOpen, setBuilderOpen] = useState(false)
   const [, setIsMaximized] = useState(false)
 
   useEffect(() => {
@@ -72,10 +75,36 @@ export default function App() {
     }
   }, [])
 
+  // Detached (torn-off) windows own their tabs' PTYs — kill them when the window
+  // closes so shells don't leak. Primary window keeps PTYs alive across reloads
+  // (backgrounding by design); they're reaped on app quit.
+  useEffect(() => {
+    if (!IS_DETACHED) return
+    const onUnload = () => {
+      for (const tab of useStore.getState().tabs) {
+        if (!tab.layout) continue
+        const walk = (n: import('@/types').SplitNode) => {
+          if (n.type === 'pane' && n.paneId) window.fterm.ptyKill(`${tab.id}-${n.paneId}`)
+          if (n.first) walk(n.first)
+          if (n.second) walk(n.second)
+        }
+        walk(tab.layout)
+      }
+    }
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [])
+
   // Sync CSS var for padding
   useEffect(() => {
     document.documentElement.style.setProperty('--terminal-padding', `${settings.terminalPadding ?? 8}px`)
   }, [settings.terminalPadding])
+
+  // Push the persisted uBOL auto-update preference to main on startup so a saved
+  // "off" is honored before the user ever opens Settings.
+  useEffect(() => {
+    window.fterm?.browserUbolSetAutoUpdate?.(settings.browserUbolAutoUpdate !== false).catch(() => {})
+  }, [])
 
 
   // Global keyboard shortcuts (driven by keybindings store)
@@ -97,6 +126,9 @@ export default function App() {
       } else if (matchesBinding(e, kb['command-palette'])) {
         e.preventDefault()
         setPaletteOpen(prev => !prev)
+      } else if (matchesBinding(e, kb['command-builder'])) {
+        e.preventDefault()
+        setBuilderOpen(prev => !prev)
       } else if (matchesBinding(e, kb['search'])) {
         e.preventDefault()
         setSearchOpen(prev => !prev)
@@ -223,6 +255,14 @@ export default function App() {
                       <Suspense fallback={null}>
                         <EditorPane tabId={tab.id} />
                       </Suspense>
+                    ) : tab.type === 'browser' ? (
+                      <Suspense fallback={null}>
+                        <BrowserView
+                          initialUrl={tab.browserUrl}
+                          onTitleChange={(t) => useStore.getState().updateTabTitle(tab.id, (t || 'Browser').slice(0, 24))}
+                          onUrlChange={(u) => useStore.getState().setTabBrowserUrl(tab.id, u)}
+                        />
+                      </Suspense>
                     ) : (
                       <PaneLayout
                         tabId={tab.id}
@@ -274,6 +314,9 @@ export default function App() {
             onClose={() => setPaletteOpen(false)}
             onToggleSearch={() => setSearchOpen(prev => !prev)}
           />
+        )}
+        {builderOpen && (
+          <CommandBuilder onClose={() => setBuilderOpen(false)} />
         )}
 
         {/* Status bar */}

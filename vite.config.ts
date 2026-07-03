@@ -30,6 +30,7 @@ export default defineConfig({
                 'ws',
                 'bufferutil',
                 'utf-8-validate',
+                'adm-zip',
               ],
             },
           },

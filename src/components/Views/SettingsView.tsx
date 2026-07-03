@@ -208,6 +208,9 @@ function GeneralTab() {
         <Row label="Copy on select">
           <Toggle value={settings.copyOnSelect !== false} onChange={v => setSettings({ copyOnSelect: v })} />
         </Row>
+        <Row label="Sync scroll across split panes">
+          <Toggle value={settings.syncPaneScroll === true} onChange={v => setSettings({ syncPaneScroll: v })} />
+        </Row>
         <Row label="Show recording button">
           <Toggle value={settings.showRecordingButton !== false} onChange={v => setSettings({ showRecordingButton: v })} />
         </Row>
@@ -246,6 +249,8 @@ function GeneralTab() {
         </Row>
       </Section>
 
+      <BrowserAdblockSection />
+
       <Section title="Backup">
         <p className="text-xs text-[#6e7681] mb-3">Export or import all visual settings as JSON.</p>
         <div className="flex gap-2">
@@ -254,6 +259,52 @@ function GeneralTab() {
         </div>
       </Section>
     </div>
+  )
+}
+
+// In-app browser ad blocker (uBlock Origin Lite) version + auto-update controls.
+function BrowserAdblockSection() {
+  const { settings, setSettings } = useStore()
+  const autoUpdate = settings.browserUbolAutoUpdate !== false
+  const [version, setVersion] = useState('')
+  const [status, setStatus] = useState<'idle' | 'checking' | 'done'>('idle')
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => { window.fterm.browserUbolInfo().then(i => setVersion(i.version)).catch(() => {}) }, [])
+
+  const toggleAuto = (v: boolean) => {
+    setSettings({ browserUbolAutoUpdate: v })
+    window.fterm.browserUbolSetAutoUpdate(v).catch(() => {})
+  }
+
+  const checkNow = async () => {
+    setStatus('checking'); setMsg('')
+    try {
+      const r = await window.fterm.browserUbolCheck()
+      setVersion(r.version)
+      setMsg(r.updated ? `Updated to ${r.version}` : r.error ? `Check failed: ${r.error}` : 'Already up to date')
+    } catch {
+      setMsg('Check failed')
+    }
+    setStatus('done')
+    setTimeout(() => setStatus('idle'), 4000)
+  }
+
+  return (
+    <Section title="Browser ad blocker">
+      <p className="text-xs text-[#6e7681] mb-3">
+        uBlock Origin Lite {version ? `v${version}` : ''} powers ad/tracker blocking in the in-app browser.
+      </p>
+      <Row label="Auto-update filter engine">
+        <Toggle value={autoUpdate} onChange={toggleAuto} />
+      </Row>
+      <div className="flex items-center gap-2 mt-3">
+        <button onClick={checkNow} disabled={status === 'checking'} className="btn-secondary flex-1">
+          {status === 'checking' ? 'Checking…' : 'Check for updates now'}
+        </button>
+      </div>
+      {msg && <p className="text-xs text-[#6e7681] mt-2">{msg}</p>}
+    </Section>
   )
 }
 
@@ -1534,6 +1585,7 @@ const ACTION_LABELS: Record<string, string> = {
   'new-tab':        'New Tab',
   'close-tab':      'Close Tab',
   'command-palette':'Command Palette',
+  'command-builder':'AI Command Builder',
   'search':         'Search Terminal',
   'next-tab':       'Next Tab',
   'prev-tab':       'Previous Tab',
@@ -1758,6 +1810,87 @@ function RemoteTab() {
           </div>
         </div>
       )}
+
+      <div className="border-t border-white/10 pt-6">
+        <SshHostsSection />
+      </div>
+    </div>
+  )
+}
+
+function SshHostsSection() {
+  const { sshHosts, addSshHost, updateSshHost, deleteSshHost } = useStore()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const blank = { label: '', host: '', user: '', port: '22', identityFile: '', extraArgs: '' }
+  const [form, setForm] = useState(blank)
+  const [adding, setAdding] = useState(false)
+
+  function startAdd() { setForm(blank); setEditingId(null); setAdding(true) }
+  function startEdit(h: typeof sshHosts[0]) {
+    setForm({
+      label: h.label, host: h.host, user: h.user,
+      port: String(h.port ?? 22), identityFile: h.identityFile ?? '', extraArgs: h.extraArgs ?? '',
+    })
+    setEditingId(h.id); setAdding(false)
+  }
+  function save() {
+    if (!form.label.trim() || !form.host.trim() || !form.user.trim()) return
+    const payload = {
+      label: form.label.trim(), host: form.host.trim(), user: form.user.trim(),
+      port: parseInt(form.port) || 22,
+      identityFile: form.identityFile.trim() || undefined,
+      extraArgs: form.extraArgs.trim() || undefined,
+    }
+    if (editingId) updateSshHost(editingId, payload)
+    else addSshHost(payload)
+    setForm(blank); setEditingId(null); setAdding(false)
+  }
+
+  const showForm = adding || editingId !== null
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-white/80 text-[13px] font-medium">SSH Hosts</div>
+          <div className="text-white/40 text-[11px] mt-0.5">Quick-connect from the command palette. Key/agent auth only — no passwords stored.</div>
+        </div>
+        {!showForm && (
+          <button onClick={startAdd} className="px-3 py-1.5 rounded-lg text-xs bg-blue-500/20 border border-blue-500/30 text-blue-300 hover:bg-blue-500/30 transition-colors">+ Add Host</button>
+        )}
+      </div>
+
+      {showForm && (
+        <div className="rounded-xl border border-blue-500/30 bg-blue-500/[0.07] p-3 grid grid-cols-2 gap-2">
+          <input className="input" placeholder="Label (e.g. Prod)" value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} />
+          <input className="input" placeholder="User" value={form.user} onChange={e => setForm({ ...form, user: e.target.value })} />
+          <input className="input" placeholder="Host / IP" value={form.host} onChange={e => setForm({ ...form, host: e.target.value })} />
+          <input className="input" placeholder="Port" type="number" value={form.port} onChange={e => setForm({ ...form, port: e.target.value })} />
+          <input className="input col-span-2" placeholder="Identity file (optional, e.g. ~/.ssh/id_ed25519)" value={form.identityFile} onChange={e => setForm({ ...form, identityFile: e.target.value })} />
+          <input className="input col-span-2" placeholder="Extra ssh args (optional)" value={form.extraArgs} onChange={e => setForm({ ...form, extraArgs: e.target.value })} />
+          <div className="col-span-2 flex gap-2 justify-end">
+            <button onClick={() => { setAdding(false); setEditingId(null) }} className="px-3 py-1.5 rounded-lg text-xs text-white/50 hover:text-white hover:bg-white/10 transition-colors">Cancel</button>
+            <button onClick={save} className="px-3 py-1.5 rounded-lg text-xs bg-blue-500/30 border border-blue-500/40 text-blue-300 hover:bg-blue-500/40 transition-colors">Save</button>
+          </div>
+        </div>
+      )}
+
+      {sshHosts.length === 0 && !showForm && (
+        <div className="text-white/30 text-xs py-3">No SSH hosts yet.</div>
+      )}
+
+      {sshHosts.map(h => (
+        <div key={h.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-white text-sm truncate">{h.label}</div>
+            <div className="text-white/40 text-xs font-mono truncate">{h.user}@{h.host}:{h.port ?? 22}</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => startEdit(h)} className="px-2.5 py-1 rounded-lg text-xs text-white/50 hover:text-white hover:bg-white/10 transition-colors">Edit</button>
+            <button onClick={() => deleteSshHost(h.id)} className="px-2.5 py-1 rounded-lg text-xs text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">Delete</button>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

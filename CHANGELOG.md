@@ -2,6 +2,14 @@
 
 All notable changes to FTerm are documented here.
 
+## [0.1.4] — 2026-06-06
+
+### Added
+- **In-app browser** — a built-in web browser available both as a dedicated tab and as a `browser` widget overlay. Runs in a hardened Electron `<webview>` on an isolated session partition with ad/tracker blocking (uBlock Origin Lite declarativeNetRequest rulesets + Ghostery engine, plus YouTube-specific scriptlet/cosmetic scrubbing). Privacy controls: session-only browsing history (never persisted to disk), a "remember me" toggle gating persistent cookies/storage, and granular clear-data (cookies, cache, storage, history) from the browser UI. Bookmarks persist across restart.
+- **SSH host manager** — save SSH connections (label, host, user, port, identity file, extra args) in Settings → Remote and one-click connect from the command palette (`SSH: <label>` group). A host is materialized as a derived profile (`shell: ssh.exe`, args `-p <port>` + optional `-i <identityFile>` + extra args + `user@host`) and launched through the existing profile→PTY spawn path, so no new IPC or shell wiring was needed. Hosts persist across restart. Key/agent auth only — passwords are never requested or stored.
+- **Notes scratchpad** (`note` / `notes` widget) — quick per-session markdown notes without leaving the terminal. Left list + right editor; title and body autosave to the store on every keystroke (last-edited timestamp tracked). Optional **Export** writes the note to `~/.fterm/notes/<title>.md` via the existing `fsWriteFile` path API. Notes persist across restart.
+- **AI command builder** (`Ctrl+K`) — describe a task in plain English and the active AI provider generates a single shell command for the current OS/shell. The call is one-off: it injects terminal context (OS, shell, CWD, git branch) but does **not** touch the chat sidebar history. The generated command lands in an editable preview with **Run** / **Copy**; Run inserts it into the active pane **without** a trailing newline, so the user reviews and presses Enter to execute — the key guardrail for AI-generated commands. Rebindable via Settings → Shortcuts; shows a hint when no AI provider is configured.
+
 ## [0.1.3] — 2026-05-23
 
 ### Security

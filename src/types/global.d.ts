@@ -1,5 +1,16 @@
 import type { AIProvider } from '@/types'
 
+export interface BrowserDownload {
+  id: number
+  filename: string
+  savePath: string
+  mimeType: string
+  state: 'started' | 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  received: number
+  total: number
+  paused: boolean
+}
+
 export interface DeviceCodeResponse {
   device_code: string
   user_code: string
@@ -70,6 +81,23 @@ interface FTermAPI {
   dragEnd: () => void
   close: () => void
   onWindowState: (cb: (state: { maximized: boolean; fullScreen: boolean }) => void) => () => void
+  browserAdblockStats: () => Promise<{ blocked: number; ready: boolean; enabled: boolean }>
+  browserAdblockToggle: (on: boolean) => Promise<boolean>
+  onAdblockStats: (cb: (s: { blocked: number }) => void) => () => void
+  browserDownloadUrl: (url: string, ephemeral?: boolean) => void
+  browserDownloadCancel: (id: number) => void
+  browserDownloadOpen: (path: string) => void
+  browserDownloadShow: (path: string) => void
+  browserClearData: (opts?: { cache?: boolean; cookies?: boolean }) => Promise<void>
+  browserDownloadModeGet: () => Promise<boolean>
+  browserDownloadModeSet: (ask: boolean) => Promise<boolean>
+  browserUbolInfo: () => Promise<{ version: string; autoUpdate: boolean }>
+  browserUbolCheck: () => Promise<{ updated: boolean; version: string; error?: string }>
+  browserUbolSetAutoUpdate: (on: boolean) => Promise<boolean>
+  dropTab: (tab: import('@/types').Tab, snapshot: any, x: number, y: number, w: number, h: number) => Promise<{ merged: boolean }>
+  consumeAdoptedTab: (token: string) => Promise<{ tab: import('@/types').Tab; seqOffset: number; snapshot?: any } | null>
+  onAdoptTab: (cb: (tab: import('@/types').Tab) => void) => () => void
+  onBrowserDownload: (cb: (d: BrowserDownload) => void) => () => void
   setWindowPosition: (x: number, y: number) => void
   getWindowPosition: () => Promise<[number, number]>
   isMaximized: () => Promise<boolean>
@@ -148,6 +176,18 @@ declare global {
     __ftermLastPetUpdate: number
     __ftermActiveTerminal?: import('@xterm/xterm').Terminal | null
     __ftermTerminalWrite?: Map<string, (data: string) => void>
+  }
+  namespace JSX {
+    interface IntrinsicElements {
+      // Electron <webview> tag — used by the in-app browser (src/components/Browser)
+      webview: React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        src?: string
+        partition?: string
+        allowpopups?: string
+        useragent?: string
+        preload?: string
+      }
+    }
   }
 }
 

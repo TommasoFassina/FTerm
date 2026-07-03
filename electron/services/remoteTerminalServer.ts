@@ -1501,6 +1501,7 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
             })
           } else if (msg.type === 'ftermfetch') {
             const total = os.totalmem(), free = os.freemem()
+            const cpus = os.cpus()
             ws.send(JSON.stringify({
               type: 'ftermfetch',
               data: {
@@ -1511,8 +1512,8 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
                 release: os.release(),
                 kernel: os.version?.() || os.release(),
                 uptime: os.uptime(),
-                cpus: os.cpus().length,
-                cpuModel: os.cpus()[0]?.model || '',
+                cpus: cpus.length,
+                cpuModel: cpus[0]?.model || '',
                 memTotal: total,
                 memUsed: total - free,
                 shell: process.env.SHELL || process.env.ComSpec || '',
@@ -1523,6 +1524,7 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
           } else if (msg.type === 'sysinfo') {
             const mem = process.memoryUsage()
             const total = os.totalmem(), free = os.freemem()
+            const cpus = os.cpus()
             ws.send(JSON.stringify({
               type: 'sysinfo:data',
               data: {
@@ -1531,8 +1533,8 @@ export async function start(port: number, win: BrowserWindow): Promise<{ pin: st
                 arch: os.arch(),
                 release: os.release(),
                 uptime: os.uptime(),
-                cpus: os.cpus().length,
-                cpuModel: os.cpus()[0]?.model || '',
+                cpus: cpus.length,
+                cpuModel: cpus[0]?.model || '',
                 loadavg: os.loadavg(),
                 memTotal: total,
                 memFree: free,

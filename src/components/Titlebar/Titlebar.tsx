@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore } from '@/store'
+import { useStore, getConfigSnapshot, IS_DETACHED, TAB_PALETTE } from '@/store'
 import { Terminal, FileCode, Plus, ChevronDown, TerminalSquare, Code, Settings, Command, Folder } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 
@@ -26,7 +26,10 @@ export default function Titlebar() {
   const duplicateTab = useStore(s => s.duplicateTab)
   const setActiveTab = useStore(s => s.setActiveTab)
   const updateTabTitle = useStore(s => s.updateTabTitle)
+  const setTabColor = useStore(s => s.setTabColor)
   const reorderTabs = useStore(s => s.reorderTabs)
+  const detachTabAway = useStore(s => s.detachTabAway)
+  const adoptTab = useStore(s => s.adoptTab)
   const clearTabBell = useStore(s => s.clearTabBell)
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -78,6 +81,9 @@ export default function Titlebar() {
   useEffect(() => {
     if (editingTabId) editRef.current?.focus()
   }, [editingTabId])
+
+  // Receive a tab dragged in from another window (merge-back).
+  useEffect(() => window.fterm.onAdoptTab(tab => adoptTab(tab)), [adoptTab])
 
   function startRename(tabId: string, title: string) {
     setEditingTabId(tabId)
@@ -146,7 +152,28 @@ export default function Titlebar() {
                 setDraggedTabId(null)
                 setDropIndex(null)
               }}
-              onDragEnd={() => {
+              onDragEnd={(e) => {
+                const sx = (e as unknown as DragEvent).screenX
+                const sy = (e as unknown as DragEvent).screenY
+                const outside =
+                  sx < window.screenX || sx > window.screenX + window.outerWidth ||
+                  sy < window.screenY || sy > window.screenY + window.outerHeight
+                // Last tab can only leave a secondary (detached) window — the primary
+                // must always keep ≥1 tab. (0,0) = a cancelled drag (Esc).
+                const canLeave = tabs.length > 1 || IS_DETACHED
+                if (outside && canLeave && (sx !== 0 || sy !== 0)) {
+                  const full = useStore.getState().tabs.find(t => t.id === tab.id)
+                  if (full) {
+                    const snapshot = JSON.parse(JSON.stringify(getConfigSnapshot()))
+                    const payload = JSON.parse(JSON.stringify(full))
+                    window.fterm.dropTab(payload, snapshot, sx, sy, window.outerWidth, window.outerHeight)
+                      .finally(() => {
+                        const remaining = useStore.getState().tabs.filter(t => t.id !== tab.id)
+                        if (remaining.length === 0) window.fterm.close()
+                        else detachTabAway(tab.id)
+                      })
+                  }
+                }
                 setDraggedTabId(null)
                 setDropIndex(null)
               }}
@@ -314,11 +341,25 @@ export default function Titlebar() {
               { label: 'Rename', action: () => { const t = tabs.find(t => t.id === tabCtxMenu.tabId); if (t) startRename(t.id, t.title) } },
               { label: 'Duplicate', action: () => duplicateTab(tabCtxMenu.tabId) },
               null,
+              'color' as const,
+              null,
               { label: 'Close', action: () => closeTab(tabCtxMenu.tabId) },
               { label: 'Close Others', action: () => closeOtherTabs(tabCtxMenu.tabId), disabled: tabs.length <= 1 },
             ].map((item, i) =>
               item === null
                 ? <div key={i} className="h-px bg-white/[0.06] my-1 mx-2" />
+                : item === 'color'
+                ? <div key={i} className="flex items-center gap-1.5 px-3 py-1.5">
+                    {TAB_PALETTE.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => { setTabColor(tabCtxMenu.tabId, c); setTabCtxMenu(null) }}
+                        className="w-4 h-4 rounded-full border border-white/20 hover:scale-110 transition-transform"
+                        style={{ backgroundColor: c }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
                 : <button
                     key={i}
                     onClick={() => { item.action(); setTabCtxMenu(null) }}

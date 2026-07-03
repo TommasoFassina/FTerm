@@ -13,8 +13,6 @@ function unpackedPath(p: string): string {
 
 const resolvedFfmpegPath = ffmpegPath ? unpackedPath(ffmpegPath) : null
 const resolvedFfprobePath = unpackedPath(ffprobeInstaller.path)
-console.log('[VideoComposer] ffmpeg path:', resolvedFfmpegPath)
-console.log('[VideoComposer] ffprobe path:', resolvedFfprobePath)
 if (resolvedFfmpegPath) ffmpeg.setFfmpegPath(resolvedFfmpegPath)
 ffmpeg.setFfprobePath(resolvedFfprobePath)
 

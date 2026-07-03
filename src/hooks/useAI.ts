@@ -99,6 +99,55 @@ export function useAI() {
     return id
   }, [ai, addChatMessage])
 
+  // One-off NL → shell command. Does NOT touch chatMessages (no sidebar pollution).
+  const generateCommand = useCallback(async (nl: string): Promise<string> => {
+    const activeProvider = ai.provider
+    if (activeProvider === 'none') throw new Error('No AI provider configured')
+
+    const id = nextId()
+    const { tabs, activeTabId, git } = useStore.getState()
+    const activeTab = tabs.find(t => t.id === activeTabId)
+    const cwd = activeTab?.currentCwd
+    const branch = git.status?.branch
+    const np = typeof navigator !== 'undefined' ? navigator.platform : 'Win32'
+    const platform = /win/i.test(np) ? 'win32' : /mac/i.test(np) ? 'darwin' : 'linux'
+    const shell = platform === 'win32' ? 'PowerShell' : 'bash'
+    const ctxParts: string[] = [`OS: ${platform}`, `Shell: ${shell}`]
+    if (cwd) ctxParts.push(`CWD: ${cwd}`)
+    if (branch) ctxParts.push(`Git branch: ${branch}`)
+
+    const system = `You translate natural language into a single safe shell command for ${shell} on ${platform}. Output ONLY the command — no markdown, no code fences, no explanation. [Terminal context: ${ctxParts.join(' | ')}]`
+
+    return new Promise<string>((resolve, reject) => {
+      let buf = ''
+      let removeChunk: () => void = () => {}
+      let removeDone: () => void = () => {}
+      let removeError: () => void = () => {}
+      const cleanup = () => { removeChunk(); removeDone(); removeError() }
+      removeChunk = window.fterm.onAIChunk((rid, text) => { if (rid === id) buf += text })
+      removeDone = window.fterm.onAIDone((rid) => {
+        if (rid !== id) return
+        cleanup()
+        resolve(buf.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim())
+      })
+      removeError = window.fterm.onAIError((rid, err) => {
+        if (rid !== id) return
+        cleanup()
+        reject(new Error(err))
+      })
+      window.fterm.aiChat({
+        requestId: id,
+        provider: activeProvider,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: nl },
+        ],
+        model: (activeProvider === 'ollama' ? ai.ollamaModel : effortToModel(activeProvider, 'fast')) || undefined,
+        ollamaUrl: ai.ollamaUrl,
+      }).catch(reject)
+    })
+  }, [ai])
+
   const testConnection = useCallback(async (provider: AIProvider) => {
     setProviderStatus(provider, { testing: true, error: undefined })
     try {
@@ -121,7 +170,7 @@ export function useAI() {
     setProviderStatus(provider as AIProvider, { connected: false })
   }, [setProviderStatus])
 
-  return { sendMessage, testConnection, saveKey, removeKey }
+  return { sendMessage, generateCommand, testConnection, saveKey, removeKey }
 }
 
 export function useAIInit() {

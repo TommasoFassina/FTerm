@@ -12,6 +12,26 @@ import { readFile } from 'fs/promises'
 import { execFile, exec } from 'child_process'
 import { promisify } from 'util'
 
+import { initBrowserSession, getAdblockStats, setAdblockEnabled, downloadUrl, cancelDownload, clearBrowsingData, setAskWhereToSave, getAskWhereToSave, isAllowedDownloadPath, getUbolInfo, checkUbolUpdateNow, setUbolAutoUpdate, BROWSER_PARTITION, BROWSER_SESSION_PARTITION, type ClearDataOptions } from './services/browserSession'
+
+// GPU: this machine's GPU driver crashes Chromium's command buffer during video playback
+// on both real-GPU ANGLE backends — D3D11 ("command_buffer_proxy_impl ... GPU state
+// invalid after WaitForGetOffsetInRange") and native GL ("eglPostSubBufferNV failed").
+// So hardware acceleration is disabled (software raster/decode). Re-test whether HW can
+// be re-enabled once the GPU driver is updated. (Note: the "GetGpuDriverOverlayInfo:
+// Failed to retrieve video device" stderr line is harmless — Chromium probing a video
+// device that doesn't exist with the GPU off.)
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu')
+
+// Silence Node deprecation warnings (DEP0040 punycode, DEP0169 url.parse) — they
+// originate in transitive dependencies, not our code, and just clutter the console.
+process.noDeprecation = true
+
+// Never let a broken stdout/stderr pipe (e.g. parent terminal closed) crash the app.
+process.stdout.on('error', (err: any) => { if (err?.code === 'EPIPE') return })
+process.stderr.on('error', (err: any) => { if (err?.code === 'EPIPE') return })
+
 const execFileAsync = promisify(execFile)
 const execAsync = promisify(exec)
 
@@ -95,6 +115,16 @@ const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: BrowserWindow | null = null
 
+// ─── Multi-window registry (tab tear-out) ───────────────────────────────────
+const windows = new Set<BrowserWindow>()
+// Pending tab hand-offs: token → payload, consumed by the freshly spawned window.
+const pendingAdopt = new Map<string, { tab: any; seqOffset: number; snapshot?: any }>()
+let winSeq = 0
+/** The BrowserWindow that sent an IPC message (multi-window aware), or the primary. */
+function senderWin(e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): BrowserWindow | null {
+  return BrowserWindow.fromWebContents(e.sender) ?? mainWindow
+}
+
 const windowStatePath = join(app.getPath('userData'), 'window-state.json')
 
 function loadWindowState(): { width: number; height: number; x?: number; y?: number } {
@@ -120,13 +150,14 @@ function saveWindowState(): void {
   saveWinTimer = setTimeout(persistWindowStateNow, 250)
 }
 
-function createWindow(): void {
+function createWindow(opts?: { adoptToken?: string; bounds?: { x: number; y: number }; size?: { width: number; height: number } }): BrowserWindow {
+  const isPrimary = !mainWindow
   const winState = loadWindowState()
-  mainWindow = new BrowserWindow({
-    width: winState.width,
-    height: winState.height,
-    x: winState.x,
-    y: winState.y,
+  const win = new BrowserWindow({
+    width: opts?.size?.width ?? (opts ? 1100 : winState.width),
+    height: opts?.size?.height ?? (opts ? 720 : winState.height),
+    x: opts?.bounds?.x ?? (opts ? undefined : winState.x),
+    y: opts?.bounds?.y ?? (opts ? undefined : winState.y),
     minWidth: 640,
     minHeight: 480,
     frame: false,
@@ -138,21 +169,46 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,            // node-pty runs in main process, preload only uses contextBridge + ipcRenderer
+      webviewTag: true,         // in-app browser (BrowserView component) — guests hardened in web-contents-created
       webSecurity: true,
       allowRunningInsecureContent: false,
       devTools: process.env.NODE_ENV === 'development',
     },
   })
 
-  mainWindow.webContents.on('before-input-event', (_e, input) => {
+  windows.add(win)
+  if (isPrimary) mainWindow = win
+
+  // Force hardened webview defaults on the in-app browser, regardless of DOM attributes.
+  win.webContents.on('will-attach-webview', (_evt, webPreferences, params) => {
+    delete (webPreferences as any).preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    ;(webPreferences as any).sandbox = true
+    // Keep plugins ON: in modern Chromium this only enables the built-in PDF viewer
+    // (Flash/NPAPI are gone), and it makes navigator.plugins a real native PluginArray
+    // matching stock Chrome — an empty list is a bot signal Cloudflare Turnstile flags.
+    ;(webPreferences as any).plugins = true
+    ;(webPreferences as any).webSecurity = true
+    ;(webPreferences as any).autoplayPolicy = 'no-user-gesture-required'  // let YouTube etc. play audio/video
+    ;(webPreferences as any).backgroundThrottling = false
+    // Only our two hardened partitions are permitted. Honor the ephemeral
+    // (session-only) partition when "remember me" is off; force the persistent
+    // one for anything else.
+    params.partition = params.partition === BROWSER_SESSION_PARTITION
+      ? BROWSER_SESSION_PARTITION
+      : BROWSER_PARTITION
+  })
+
+  win.webContents.on('before-input-event', (_e, input) => {
     if (input.type === 'keyDown' && input.control && !input.shift && !input.alt && input.key.toLowerCase() === 'r') {
       _e.preventDefault()
-      mainWindow?.webContents.send('shortcut:history-search')
+      win.webContents.send('shortcut:history-search')
     }
   })
 
   // Block navigation away from app origin — prevents redirect-based exfiltration if renderer is XSS'd
-  mainWindow.webContents.on('will-navigate', (e, url) => {
+  win.webContents.on('will-navigate', (e, url) => {
     try {
       const parsed = new URL(url)
       const devOk = isDev && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
@@ -162,7 +218,7 @@ function createWindow(): void {
   })
 
   // Open all window.open() / target=_blank externally via shell — never spawn another BrowserWindow
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url)
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') shell.openExternal(url)
@@ -170,35 +226,43 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  const query = opts?.adoptToken ? `?adopt=${opts.adoptToken}` : ''
   if (isDev) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173')
+    win.loadURL((process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173') + query)
   } else {
-    mainWindow.loadFile(join(__dirname, '../dist/index.html'))
+    win.loadFile(join(__dirname, '../dist/index.html'), { search: query.slice(1) })
   }
 
-  mainWindow.on('close', () => {
-    if (saveWinTimer) { clearTimeout(saveWinTimer); saveWinTimer = null }
-    persistWindowStateNow()
+  win.on('close', () => {
+    if (isPrimary) {
+      if (saveWinTimer) { clearTimeout(saveWinTimer); saveWinTimer = null }
+      persistWindowStateNow()
+    }
   })
-  mainWindow.on('closed', () => {
-    pty.killAll()
-    mainWindow = null
+  win.on('closed', () => {
+    windows.delete(win)
+    if (win === mainWindow) mainWindow = windows.values().next().value ?? null
   })
-  mainWindow.on('resize', saveWindowState)
-  mainWindow.on('moved', saveWindowState)
+  if (isPrimary) {
+    win.on('resize', saveWindowState)
+    win.on('moved', saveWindowState)
+  }
 
-  // Broadcast window state changes to renderer so UI stays in sync
+  // Broadcast window state changes to this window's renderer so its titlebar stays in sync
   const sendState = () => {
-    if (!mainWindow) return
-    mainWindow.webContents.send('window:state', {
-      maximized: mainWindow.isMaximized(),
-      fullScreen: mainWindow.isFullScreen(),
+    if (win.isDestroyed()) return
+    win.webContents.send('window:state', {
+      maximized: win.isMaximized(),
+      fullScreen: win.isFullScreen(),
     })
   }
-  mainWindow.on('maximize', sendState)
-  mainWindow.on('unmaximize', sendState)
-  mainWindow.on('enter-full-screen', sendState)
-  mainWindow.on('leave-full-screen', sendState)
+  win.on('maximize', sendState)
+  win.on('unmaximize', sendState)
+  win.on('enter-full-screen', sendState)
+  win.on('leave-full-screen', sendState)
+
+  // Only the primary window runs the shake easter-egg (keeps it simple).
+  if (!isPrimary) return win
 
   // Easter egg: detect window shake / stillness and notify renderer (pet reacts)
   let lastPos: { x: number; y: number; ts: number } | null = null
@@ -211,13 +275,13 @@ function createWindow(): void {
     stillTimer = setTimeout(() => {
       if (shakeActive) {
         shakeActive = false
-        mainWindow?.webContents.send('pet:still')
+        win.webContents.send('pet:still')
       }
     }, 500)
   }
-  mainWindow.on('move', () => {
-    if (!mainWindow) return
-    const [x, y] = mainWindow.getPosition()
+  win.on('move', () => {
+    if (win.isDestroyed()) return
+    const [x, y] = win.getPosition()
     const now = Date.now()
     if (lastPos) {
       const dx = x - lastPos.x
@@ -231,7 +295,7 @@ function createWindow(): void {
           if (reversals.length >= 4) {
             reversals = []
             shakeActive = true
-            mainWindow.webContents.send('pet:shake')
+            win.webContents.send('pet:shake')
           }
         }
       }
@@ -240,17 +304,51 @@ function createWindow(): void {
     lastPos = { x, y, ts: now }
     if (shakeActive) armStill()
   })
+
+  return win
 }
+
+// ─── Tab tear-out / merge IPC (multi-window) ─────────────────────────────────
+function pointInBounds(b: Electron.Rectangle, x: number, y: number): boolean {
+  return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height
+}
+
+ipcMain.handle('tab:drop', (e, tab: any, snapshot: any, x: number, y: number, w: number, h: number) => {
+  const source = senderWin(e)
+  // Dropped over another FTerm window → merge the tab into it.
+  const target = [...windows].find(win =>
+    win !== source && !win.isDestroyed() && pointInBounds(win.getBounds(), x, y))
+  if (target) {
+    target.webContents.send('tab:adopt-into', tab)
+    if (target.isMinimized()) target.restore()
+    target.focus()
+    return { merged: true }
+  }
+  // Otherwise spawn a new window that adopts the tab (same size as origin).
+  const token = `${Date.now().toString(36)}-${(++winSeq).toString(36)}`
+  // 100k id band per window so future tab ids never collide across windows.
+  pendingAdopt.set(token, { tab, seqOffset: winSeq * 100000, snapshot })
+  createWindow({
+    adoptToken: token,
+    bounds: { x: Math.round(x - 80), y: Math.round(y - 16) },
+    size: w > 200 && h > 200 ? { width: Math.round(w), height: Math.round(h) } : undefined,
+  })
+  return { merged: false }
+})
+ipcMain.handle('tab:consume-adopt', (_e, token: string) => {
+  const payload = pendingAdopt.get(token)
+  if (payload) pendingAdopt.delete(token)
+  return payload ?? null
+})
 
 // ─── PTY IPC ─────────────────────────────────────────────────────────────────
 
-ipcMain.handle('pty:create', (_e, tabId: string, cols: number, rows: number, shell?: string, args?: string[], cwd?: string, env?: Record<string, string>) => {
-  if (!mainWindow) throw new Error('No window')
-  return pty.createSession(tabId, cols, rows, mainWindow, shell, args, cwd, env)
+ipcMain.handle('pty:create', (e, tabId: string, cols: number, rows: number, shell?: string, args?: string[], cwd?: string, env?: Record<string, string>) => {
+  return pty.createSession(tabId, cols, rows, senderWin(e), shell, args, cwd, env)
 })
 
-ipcMain.on('pty:write', (_e, tabId: string, data: string) => pty.writeToSession(tabId, data))
-ipcMain.on('pty:resize', (_e, tabId: string, c: number, r: number) => pty.resizeSession(tabId, c, r))
+ipcMain.on('pty:write', (e, tabId: string, data: string) => pty.writeToSession(tabId, data, senderWin(e)))
+ipcMain.on('pty:resize', (e, tabId: string, c: number, r: number) => pty.resizeSession(tabId, c, r, senderWin(e)))
 ipcMain.on('pty:kill', (_e, tabId: string) => pty.killSession(tabId))
 
 // ─── Secure key storage IPC ───────────────────────────────────────────────────
@@ -295,58 +393,62 @@ ipcMain.handle('oauth:github:redirect', async (_e, clientId: string) => {
 
 // ─── Window controls IPC ──────────────────────────────────────────────────────
 
-ipcMain.on('window:minimize', () => mainWindow?.minimize())
-let preMaxBounds: Electron.Rectangle | null = null
+ipcMain.on('window:minimize', (e) => senderWin(e)?.minimize())
+// Per-window saved restore-bounds (custom Windows maximize) keyed by window id.
+const preMaxBounds = new Map<number, Electron.Rectangle>()
 
-function toggleMaximize() {
-  if (!mainWindow) return
-  const isMax = mainWindow.isMaximized() || (process.platform === 'win32' && preMaxBounds !== null)
-  const isFS = mainWindow.isFullScreen()
+function toggleMaximizeWin(w: BrowserWindow | null) {
+  if (!w) return
+  const saved = preMaxBounds.get(w.id) ?? null
+  const isMax = w.isMaximized() || (process.platform === 'win32' && saved !== null)
+  const isFS = w.isFullScreen()
   if (isMax || isFS) {
     if (isFS) {
-      mainWindow.setFullScreen(false)
-    } else if (process.platform === 'win32' && preMaxBounds) {
-      mainWindow.setBounds(preMaxBounds)
-      preMaxBounds = null
-      mainWindow.webContents.send('window:state', { maximized: false, fullScreen: false })
+      w.setFullScreen(false)
+    } else if (process.platform === 'win32' && saved) {
+      w.setBounds(saved)
+      preMaxBounds.delete(w.id)
+      w.webContents.send('window:state', { maximized: false, fullScreen: false })
     } else {
-      mainWindow.unmaximize()
+      w.unmaximize()
     }
   } else {
     if (process.platform === 'win32') {
-      preMaxBounds = mainWindow.getBounds()
-      const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea
-      mainWindow.setBounds(workArea)
-      mainWindow.webContents.send('window:state', { maximized: true, fullScreen: false })
+      preMaxBounds.set(w.id, w.getBounds())
+      const workArea = screen.getDisplayMatching(w.getBounds()).workArea
+      w.setBounds(workArea)
+      w.webContents.send('window:state', { maximized: true, fullScreen: false })
     } else {
-      mainWindow.maximize()
+      w.maximize()
     }
   }
 }
 
-ipcMain.on('window:maximize', toggleMaximize)
+ipcMain.on('window:maximize', (e) => toggleMaximizeWin(senderWin(e)))
 
-let dragState: { cursor: { x: number; y: number }; x: number; y: number; width: number; height: number } | null = null
-ipcMain.on('window:drag-start', () => {
-  if (!mainWindow) return
-  const b = mainWindow.getBounds()
-  dragState = { cursor: screen.getCursorScreenPoint(), x: b.x, y: b.y, width: b.width, height: b.height }
+type DragState = { cursor: { x: number; y: number }; x: number; y: number; width: number; height: number }
+const dragStates = new Map<number, DragState>()
+ipcMain.on('window:drag-start', (e) => {
+  const w = senderWin(e); if (!w) return
+  const b = w.getBounds()
+  dragStates.set(w.id, { cursor: screen.getCursorScreenPoint(), x: b.x, y: b.y, width: b.width, height: b.height })
 })
-ipcMain.on('window:drag-update', () => {
-  if (!mainWindow || !dragState) return
+ipcMain.on('window:drag-update', (e) => {
+  const w = senderWin(e); if (!w) return
+  const ds = dragStates.get(w.id); if (!ds) return
   const cur = screen.getCursorScreenPoint()
-  const dx = cur.x - dragState.cursor.x
-  const dy = cur.y - dragState.cursor.y
-  dragState.cursor = cur
-  dragState.x += dx
-  dragState.y += dy
-  mainWindow.setBounds({ x: Math.round(dragState.x), y: Math.round(dragState.y), width: dragState.width, height: dragState.height })
+  const dx = cur.x - ds.cursor.x
+  const dy = cur.y - ds.cursor.y
+  ds.cursor = cur
+  ds.x += dx
+  ds.y += dy
+  w.setBounds({ x: Math.round(ds.x), y: Math.round(ds.y), width: ds.width, height: ds.height })
 })
-ipcMain.on('window:drag-end', () => { dragState = null })
-ipcMain.on('window:close', () => mainWindow?.close())
-ipcMain.on('window:set-position', (_e, x: number, y: number) => mainWindow?.setPosition(x, y))
-ipcMain.on('window:set-opacity', (_e, v: number) => mainWindow?.setOpacity(Math.min(1, Math.max(0.1, v))))
-ipcMain.handle('window:get-position', () => mainWindow?.getPosition() ?? [0, 0])
+ipcMain.on('window:drag-end', (e) => { const w = senderWin(e); if (w) dragStates.delete(w.id) })
+ipcMain.on('window:close', (e) => senderWin(e)?.close())
+ipcMain.on('window:set-position', (e, x: number, y: number) => senderWin(e)?.setPosition(x, y))
+ipcMain.on('window:set-opacity', (e, v: number) => senderWin(e)?.setOpacity(Math.min(1, Math.max(0.1, v))))
+ipcMain.handle('window:get-position', (e) => senderWin(e)?.getPosition() ?? [0, 0])
 ipcMain.on('window:open-external', (_e, url: string) => {
   // Only allow http(s) URLs to prevent opening arbitrary protocols (file://, smb://, etc.)
   try {
@@ -357,13 +459,34 @@ ipcMain.on('window:open-external', (_e, url: string) => {
   } catch { /* invalid URL — ignore */ }
 })
 
+// Extensions that EXECUTE code when opened — never hand these to the OS opener.
+// Blocks an XSS'd renderer from launching programs via shell.openPath.
+const EXECUTABLE_EXTS = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.scr', '.pif', '.msi', '.msp', '.cpl', '.hta',
+  '.ps1', '.psm1', '.psd1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.sct',
+  '.scf', '.lnk', '.inf', '.reg', '.jar', '.gadget', '.application', '.msc', '.dll',
+  '.sh', '.command', '.app', '.osx', '.run', '.bin', '.appimage',
+  // Windows LOLBins that execute / phone-home when opened
+  '.url', '.settingcontent-ms', '.appref-ms', '.library-ms', '.diagcab', '.chm',
+  '.ws', '.vb', '.msh', '.msh1', '.msh2', '.mshxml', '.msh1xml', '.msh2xml', '.cdxml',
+  // Interpreted scripts that run via file association
+  '.py', '.pyw', '.pyc', '.rb', '.pl', '.php', '.lua', '.ahk', '.tcl', '.r',
+])
+// Shared guard for every shell.openPath sink: refuse UNC paths (SMB auth leak /
+// remote code exec from attacker-controlled shares) and executable/script
+// extensions. Stops an XSS'd renderer from launching programs.
+function isSafeToOpen(filePath: unknown): filePath is string {
+  if (typeof filePath !== 'string' || filePath.length === 0) return false
+  if (filePath.startsWith('\\\\') || filePath.startsWith('//')) return false
+  const ext = require('path').extname(filePath).toLowerCase()
+  if (EXECUTABLE_EXTS.has(ext)) return false
+  return true
+}
 ipcMain.on('shell:open-path', (_e, filePath: string) => {
-  if (typeof filePath === 'string' && filePath.length > 0) {
-    shell.openPath(filePath)
-  }
+  if (isSafeToOpen(filePath)) shell.openPath(filePath)
 })
 
-ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false)
+ipcMain.handle('window:is-maximized', (e) => senderWin(e)?.isMaximized() ?? false)
 
 // ─── System Metrics IPC ───────────────────────────────────────────────────────
 
@@ -441,9 +564,7 @@ ipcMain.handle('system:ping', async (_e, host: string, count: number = 10) => {
       child.on('error', (err: Error) => { clearTimeout(killTimer); reject(err) })
     })
 
-    console.log('[ping] raw stdout:', JSON.stringify(stdout))
     const rtts = parseRtts(stdout)
-    console.log('[ping] parsed rtts:', rtts)
     return summarise(rtts, count - rtts.length)
   } catch (err: any) {
     console.error('[ping] error:', err)
@@ -1123,6 +1244,19 @@ ipcMain.handle('clipboard:clear', () => {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
+// Single instance — a second launch focuses the existing window instead of
+// spawning a rival process that fights over the GPU/disk cache (breaks video decode).
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 app.whenReady().then(() => {
   protocol.handle('fterm', (request) => {
     // URL format: fterm://local/<absolute-path>  e.g. fterm://local/C:/Users/…
@@ -1236,16 +1370,60 @@ app.whenReady().then(() => {
   })
 
   registerAIHandlers()
+  initBrowserSession()  // adblock + hardened partition for in-app browser (non-blocking)
   createWindow()
 
   clipLastSeen = clipboard.readText() || ''
   clipPollTimer = setInterval(pollClipboard, 800)
 })
 
+// Harden in-app browser <webview> guests. Fires for the main window AND every webview.
+app.on('web-contents-created', (_e, contents) => {
+  if (contents.getType() !== 'webview') return
+
+  // Pop-ups / target=_blank → open in the user's real browser, never a new Electron window.
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const p = new URL(url)
+      if (p.protocol === 'http:' || p.protocol === 'https:') shell.openExternal(url)
+    } catch { /* ignore */ }
+    return { action: 'deny' }
+  })
+
+  // Block navigation to non-web schemes (file:, javascript:, etc.) inside the guest.
+  contents.on('will-navigate', (evt, url) => {
+    try {
+      const p = new URL(url)
+      if (p.protocol !== 'http:' && p.protocol !== 'https:' && p.protocol !== 'about:') evt.preventDefault()
+    } catch { evt.preventDefault() }
+  })
+})
+
+ipcMain.handle('browser:adblock-stats', () => getAdblockStats())
+ipcMain.on('browser:download-url', (_e, url: string, ephemeral?: boolean) => downloadUrl(url, !!ephemeral))
+ipcMain.on('browser:download-cancel', (_e, id: number) => cancelDownload(id))
+ipcMain.on('browser:download-open', (_e, path: string) => { if (isAllowedDownloadPath(path) && isSafeToOpen(path)) shell.openPath(path) })
+ipcMain.on('browser:download-show', (_e, path: string) => { if (isAllowedDownloadPath(path)) shell.showItemInFolder(path) })
+ipcMain.handle('browser:clear-data', (_e, opts?: ClearDataOptions) => {
+  // Coerce to plain booleans so a malformed renderer payload can't smuggle
+  // unexpected shapes into the session API.
+  const safe = opts && typeof opts === 'object'
+    ? { cache: !!opts.cache, cookies: !!opts.cookies }
+    : undefined
+  return clearBrowsingData(safe)
+})
+ipcMain.handle('browser:adblock-toggle', (_e, on: boolean) => setAdblockEnabled(on))
+ipcMain.handle('browser:download-mode-get', () => getAskWhereToSave())
+ipcMain.handle('browser:download-mode-set', (_e, ask: boolean) => setAskWhereToSave(ask))
+ipcMain.handle('browser:ubol-info', () => getUbolInfo())
+ipcMain.handle('browser:ubol-check', () => checkUbolUpdateNow())
+ipcMain.handle('browser:ubol-autoupdate', (_e, on: boolean) => setUbolAutoUpdate(!!on))
+
 app.on('window-all-closed', () => {
   remoteTerminal.stop().catch(() => { })
   clearCopilotToken()
   if (clipPollTimer) { clearInterval(clipPollTimer); clipPollTimer = null }
+  pty.killAll()   // all windows gone → tear down every PTY session
   if (process.platform !== 'darwin') app.quit()
 })
 

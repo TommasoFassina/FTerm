@@ -9,6 +9,10 @@ import { join } from 'path'
 
 const sessions = new Map<string, pty.IPty>()
 const sessionIds = new Map<string, number>()
+// tabId → webContents.id of the window that currently owns (renders) the tab.
+// Updated whenever that window creates/adopts, writes to, or resizes the tab,
+// so steady-state PTY output is sent to a single window instead of broadcast.
+const tabOwners = new Map<string, number>()
 let nextSessionId = 0
 
 const sessionHistory = new Map<string, string[]>()
@@ -92,7 +96,7 @@ export function createSession(
   tabId: string,
   cols: number,
   rows: number,
-  win: BrowserWindow,
+  _win: BrowserWindow | null,
   customShell?: string,
   customArgs?: string[],
   customCwd?: string,
@@ -100,6 +104,8 @@ export function createSession(
 ): { pid: number; sessionId: number; history: string; cwd: string; reused: boolean } {
   const homedir = process.env.USERPROFILE || process.env.HOME || 'C:\\'
   const resolvedCwd = (customCwd && existsSync(customCwd)) ? customCwd : homedir
+  // Whichever window calls create/adopt now owns this tab's output.
+  if (_win && !_win.isDestroyed()) tabOwners.set(tabId, _win.webContents.id)
   if (sessions.has(tabId)) {
     const existingPty = sessions.get(tabId)!
     const existingId = sessionIds.get(tabId)!
@@ -163,10 +169,27 @@ export function createSession(
   let buffer = ''
   let flushTimeout: NodeJS.Timeout | null = null
 
+  const broadcast = (channel: string, payload: any) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send(channel, payload)
+    }
+  }
+
+  // Send to the owning window only (steady state). Fall back to a broadcast if the
+  // owner is unknown or gone, so a tab mid-move between windows never drops output.
+  const emit = (channel: string, payload: any) => {
+    const ownerId = tabOwners.get(tabId)
+    if (ownerId !== undefined) {
+      const w = BrowserWindow.getAllWindows().find(b => !b.isDestroyed() && b.webContents.id === ownerId)
+      if (w) { w.webContents.send(channel, payload); return }
+      tabOwners.delete(tabId) // owner window closed — fall through to broadcast
+    }
+    broadcast(channel, payload)
+  }
+
   const flush = () => {
-    if (!win.isDestroyed() && buffer.length > 0) {
-      // Use IPC send with buffered chunk
-      win.webContents.send(`pty:data:${tabId}`, buffer)
+    if (buffer.length > 0) {
+      emit(`pty:data:${tabId}`, buffer)
       buffer = ''
     }
     flushTimeout = null
@@ -199,9 +222,8 @@ export function createSession(
     sessions.delete(tabId)
     sessionIds.delete(tabId)
     sessionHistory.delete(tabId)
-    if (!win.isDestroyed()) {
-      win.webContents.send(`pty:exit:${tabId}:${sessionId}`, exitCode)
-    }
+    broadcast(`pty:exit:${tabId}:${sessionId}`, exitCode)
+    tabOwners.delete(tabId)
   })
 
   sessions.set(tabId, ptyProcess)
@@ -209,11 +231,13 @@ export function createSession(
   return { pid: ptyProcess.pid!, sessionId, history: '', cwd: resolvedCwd, reused: false }
 }
 
-export function writeToSession(tabId: string, data: string): void {
+export function writeToSession(tabId: string, data: string, win?: BrowserWindow | null): void {
+  if (win && !win.isDestroyed()) tabOwners.set(tabId, win.webContents.id)
   sessions.get(tabId)?.write(data)
 }
 
-export function resizeSession(tabId: string, cols: number, rows: number): void {
+export function resizeSession(tabId: string, cols: number, rows: number, win?: BrowserWindow | null): void {
+  if (win && !win.isDestroyed()) tabOwners.set(tabId, win.webContents.id)
   const p = sessions.get(tabId)
   if (p) {
     p.resize(Math.max(cols, 10), Math.max(rows, 5))
@@ -230,6 +254,7 @@ export function killSession(tabId: string): void {
     sessions.delete(tabId)
     sessionIds.delete(tabId)
     sessionHistory.delete(tabId)
+    tabOwners.delete(tabId)
   }
 }
 
@@ -240,4 +265,5 @@ export function killAll(): void {
   sessions.clear()
   sessionIds.clear()
   sessionHistory.clear()
+  tabOwners.clear()
 }

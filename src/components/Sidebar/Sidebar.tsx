@@ -6,7 +6,8 @@ import {
     Sparkles,
     Settings,
     GitBranch,
-    Cat
+    Cat,
+    Globe
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useStore, useActiveTheme } from '@/store';
@@ -48,6 +49,7 @@ export default function Sidebar() {
     const settings = useStore(s => s.settings)
     const setActiveView = useStore(s => s.setActiveView)
     const setAIConfig = useStore(s => s.setAIConfig)
+    const addBrowserTab = useStore(s => s.addBrowserTab)
     const theme = useActiveTheme();
     const accent = theme.blue || '#58a6ff';
     const isRight = settings.layout?.navSidebarPosition === 'right';
@@ -55,10 +57,11 @@ export default function Sidebar() {
     return (
         <div className={`w-12 h-full flex flex-col items-center py-3 gap-1 ${isRight ? 'border-l' : 'border-r'} border-white/5 z-40`}>
             <SidebarIcon icon={<TerminalIcon size={18} />} label="Terminal" active={activeView === 'terminal'} onClick={() => setActiveView('terminal')} accent={accent} isRight={isRight} />
+            <SidebarIcon icon={<GitBranch size={18} />} label="Source Control" active={activeView === 'git'} onClick={() => setActiveView('git')} accent={accent} isRight={isRight} />
+            <SidebarIcon icon={<Globe size={18} />} label="New Browser Tab" active={false} onClick={() => { setActiveView('terminal'); addBrowserTab() }} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Layout size={18} />} label="Profiles" active={activeView === 'profiles'} onClick={() => setActiveView('profiles')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Palette size={18} />} label="Themes" active={activeView === 'themes'} onClick={() => setActiveView('themes')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Blocks size={18} />} label="Plugins" active={activeView === 'plugins'} onClick={() => setActiveView('plugins')} accent={accent} isRight={isRight} />
-            <SidebarIcon icon={<GitBranch size={18} />} label="Source Control" active={activeView === 'git'} onClick={() => setActiveView('git')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Cat size={18} />} label="Companion" active={activeView === 'pet'} onClick={() => setActiveView('pet')} accent={accent} isRight={isRight} />
 
             <div className="flex-1" />

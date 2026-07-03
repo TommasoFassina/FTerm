@@ -129,6 +129,39 @@ contextBridge.exposeInMainWorld('fterm', {
     ipcRenderer.on('window:state', fn)
     return () => ipcRenderer.removeListener('window:state', fn)
   },
+  // In-app browser adblock
+  browserAdblockStats: (): Promise<{ blocked: number; ready: boolean; enabled: boolean }> => ipcRenderer.invoke('browser:adblock-stats'),
+  browserAdblockToggle: (on: boolean): Promise<boolean> => ipcRenderer.invoke('browser:adblock-toggle', on),
+  onAdblockStats: (cb: (s: { blocked: number }) => void) => {
+    const fn = (_: Electron.IpcRendererEvent, s: { blocked: number }) => cb(s)
+    ipcRenderer.on('browser:adblock-stats', fn)
+    return () => ipcRenderer.removeListener('browser:adblock-stats', fn)
+  },
+  browserDownloadUrl: (url: string, ephemeral?: boolean) => ipcRenderer.send('browser:download-url', url, ephemeral),
+  browserDownloadCancel: (id: number) => ipcRenderer.send('browser:download-cancel', id),
+  browserDownloadOpen: (path: string) => ipcRenderer.send('browser:download-open', path),
+  browserDownloadShow: (path: string) => ipcRenderer.send('browser:download-show', path),
+  browserClearData: (opts?: { cache?: boolean; cookies?: boolean }): Promise<void> => ipcRenderer.invoke('browser:clear-data', opts),
+  browserDownloadModeGet: (): Promise<boolean> => ipcRenderer.invoke('browser:download-mode-get'),
+  browserDownloadModeSet: (ask: boolean): Promise<boolean> => ipcRenderer.invoke('browser:download-mode-set', ask),
+  browserUbolInfo: (): Promise<{ version: string; autoUpdate: boolean }> => ipcRenderer.invoke('browser:ubol-info'),
+  browserUbolCheck: (): Promise<{ updated: boolean; version: string; error?: string }> => ipcRenderer.invoke('browser:ubol-check'),
+  browserUbolSetAutoUpdate: (on: boolean): Promise<boolean> => ipcRenderer.invoke('browser:ubol-autoupdate', on),
+  // Tab tear-out / merge between windows
+  dropTab: (tab: any, snapshot: any, x: number, y: number, w: number, h: number): Promise<{ merged: boolean }> =>
+    ipcRenderer.invoke('tab:drop', tab, snapshot, x, y, w, h),
+  consumeAdoptedTab: (token: string): Promise<{ tab: any; seqOffset: number; snapshot?: any } | null> =>
+    ipcRenderer.invoke('tab:consume-adopt', token),
+  onAdoptTab: (cb: (tab: any) => void) => {
+    const fn = (_: Electron.IpcRendererEvent, tab: any) => cb(tab)
+    ipcRenderer.on('tab:adopt-into', fn)
+    return () => ipcRenderer.removeListener('tab:adopt-into', fn)
+  },
+  onBrowserDownload: (cb: (d: any) => void) => {
+    const fn = (_: Electron.IpcRendererEvent, d: any) => cb(d)
+    ipcRenderer.on('browser:download', fn)
+    return () => ipcRenderer.removeListener('browser:download', fn)
+  },
   setWindowPosition: (x: number, y: number) => ipcRenderer.send('window:set-position', x, y),
   getWindowPosition: (): Promise<[number, number]> => ipcRenderer.invoke('window:get-position'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),

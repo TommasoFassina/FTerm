@@ -185,7 +185,7 @@ export default function FtermfetchWidget({ onClose }: Props) {
               </span>
             ))}
             <span className="font-mono text-[10px] mt-2" style={{ color: theme.brightBlack }}>
-              The AI-Powered Terminal · v0.1.3
+              The AI-Powered Terminal · v0.1.4
             </span>
             <span className="font-mono text-[10px]" style={{ color: theme.brightBlack }}>
               {sysInfo ? `↑ ${formatUptime(sysInfo.uptime)}` : ''}

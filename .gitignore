@@ -9,6 +9,10 @@ dist-electron/
 release/
 out/
 
+# ── Vendored third-party (GPL uBlock Origin Lite) — fetched locally for build ──
+# Bundled into release via electron-builder extraResources; not redistributed in-repo.
+electron/vendor/
+
 # ── Electron userData (OS-specific app data, keys, logs) ─────────────────────
 # These are stored in the OS user profile, not the project dir.
 # If you ever symlink or configure userData inside the repo, exclude it:

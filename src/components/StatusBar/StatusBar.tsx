@@ -78,6 +78,7 @@ export default function StatusBar() {
   useEffect(() => {
     let unmounted = false
     const poll = async () => {
+      if (document.hidden) return  // skip metrics IPC while window hidden — resumes on re-show
       try {
         const data = await window.fterm.getSystemMetrics()
         if (unmounted) return
@@ -107,7 +108,9 @@ export default function StatusBar() {
 
     poll()
     const timer = setInterval(poll, 2000)
-    return () => { unmounted = true; clearInterval(timer) }
+    const onVis = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unmounted = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVis) }
   }, [])
 
   useEffect(() => {
@@ -117,6 +120,7 @@ export default function StatusBar() {
     }
     let unmounted = false
     const poll = async () => {
+      if (document.hidden) return  // don't spawn the statusline process while window hidden
       try {
         const out = await window.fterm.shellExec(claudeStatusline.command)
         if (!unmounted) setStatuslineText(out || null)
@@ -126,7 +130,9 @@ export default function StatusBar() {
     }
     poll()
     const timer = setInterval(poll, claudeStatusline.pollInterval ?? 3000)
-    return () => { unmounted = true; clearInterval(timer) }
+    const onVis = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unmounted = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVis) }
   }, [claudeStatusline?.enabled, claudeStatusline?.command, claudeStatusline?.pollInterval])
 
   useEffect(() => {
@@ -140,6 +146,7 @@ export default function StatusBar() {
     init()
 
     const poll = async () => {
+      if (document.hidden) return  // skip file read/parse while hidden; cost is cumulative so re-show catches up
       const statsFile = statsFileRef.current
       if (!statsFile) return
       try {
@@ -184,7 +191,9 @@ export default function StatusBar() {
     }
 
     const timer = setInterval(poll, 2000)
-    return () => { unmounted = true; clearInterval(timer) }
+    const onVis = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { unmounted = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVis) }
   }, [activeTabId, setClaudeCodeStats, addClaudeCodeCost])
 
   const provider = ai.provider

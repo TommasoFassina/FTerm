@@ -13,7 +13,7 @@ import { useAI } from '@/hooks/useAI'
 import { isErrorOutput, analyzeOutput } from '@/utils/petReactions'
 import ContextMenu from '@/components/ContextMenu/ContextMenu'
 import { pluginManager } from '@/plugins'
-import { AnimatePresence } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import FileExplorerWidget from '@/components/Widgets/FileExplorerWidget'
 import RecordingControls from './RecordingControls'
 import SystemMonitorWidget from '@/components/Widgets/SystemMonitorWidget'
@@ -23,10 +23,12 @@ import PingWidget from '@/components/Widgets/PingWidget'
 import DataTableWidget from '@/components/Widgets/DataTableWidget'
 import PortScanWidget from '@/components/Widgets/PortScanWidget'
 import SnippetsWidget from '@/components/Widgets/SnippetsWidget'
+import NotesWidget from '@/components/Widgets/NotesWidget'
 import FtermfetchWidget from '@/components/Widgets/FtermfetchWidget'
 import ImageViewerWidget from '@/components/Widgets/ImageViewerWidget'
 import VisualizerWidget from '@/components/Widgets/VisualizerWidget'
 import ClipboardWidget from '@/components/Widgets/ClipboardWidget'
+import BrowserView from '@/components/Browser/BrowserView'
 import HistorySearch from './HistorySearch'
 import SearchBar from './SearchBar'
 import { searchAddons, terminalInstances } from './terminalRegistry'
@@ -37,6 +39,9 @@ interface Props {
   active: boolean
   profileId?: string
 }
+
+// Guards against feedback loops when broadcasting scroll to sibling panes.
+let syncingScroll = false
 
 export default function TerminalPane({ tabId, paneId, active, profileId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -160,6 +165,47 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         }
       })
     } catch (e) { console.warn('localhost link provider failed', e) }
+
+    // File-path link provider — Windows abs (C:\…), POSIX abs (/…), home (~/…),
+    // and relative (./…, ../…) paths become clickable; opens in OS default app.
+    const FILE_PATH_RE = /(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|\/)[^\s"'`<>|*?]+/g
+    const openFilePath = (raw: string) => {
+      let p = raw.trim().replace(/[)\].,;:]+$/, '') // strip trailing punctuation
+      if (!p) return
+      if (p.startsWith('~')) p = window.fterm.homedir + p.slice(1)
+      const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(p)
+      if (!isAbs) {
+        const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd || window.fterm.homedir
+        const sep = cwd.includes('\\') ? '\\' : '/'
+        p = cwd.replace(/[\\/]+$/, '') + sep + p.replace(/^\.[\\/]/, '')
+      }
+      try { window.fterm.openPath(p) } catch { /* ignore */ }
+    }
+    try {
+      term.registerLinkProvider({
+        provideLinks(bufferLineNumber, callback) {
+          const line = term.buffer.active.getLine(bufferLineNumber - 1)
+          const text = line?.translateToString(true) ?? ''
+          if (!text) { callback(undefined); return }
+          const links: any[] = []
+          let m: RegExpExecArray | null
+          FILE_PATH_RE.lastIndex = 0
+          while ((m = FILE_PATH_RE.exec(text)) !== null) {
+            // Skip URLs (http://, file://) — handled by WebLinks/OSC8.
+            if (/:\/\//.test(m[0])) continue
+            const startCol = m.index + 1
+            const endCol = startCol + m[0].length - 1
+            links.push({
+              text: m[0],
+              range: { start: { x: startCol, y: bufferLineNumber }, end: { x: endCol, y: bufferLineNumber } },
+              activate: (_e: MouseEvent, t: string) => openFilePath(t),
+            })
+          }
+          callback(links.length ? links : undefined)
+        }
+      })
+    } catch (e) { console.warn('file-path link provider failed', e) }
+
     const search = new SearchAddon()
     term.loadAddon(search)
 
@@ -702,6 +748,25 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           return false
         }
 
+        // browse [url] → in-pane browser widget ; browser [url] → new browser tab
+        if (input === 'browse' || input.startsWith('browse ') || input === 'browser' || input.startsWith('browser ')) {
+          e.preventDefault()
+          const asTab = input === 'browser' || input.startsWith('browser ')
+          const arg = input.replace(/^browser?\s*/, '').trim().replace(/^["']|["']$/g, '')
+          const url = arg
+            ? (/^https?:\/\//i.test(arg) ? arg
+              : /^[^\s]+\.[^\s]{2,}/.test(arg) ? 'https://' + arg
+                : 'https://duckduckgo.com/?q=' + encodeURIComponent(arg))
+            : undefined
+          window.fterm.ptyWrite(instanceId, '\x7f'.repeat(currentInputRef.current.length))
+          currentInputRef.current = ''
+          if (ac) updateAcUI(null)
+          autocompleteRef.current = null
+          if (asTab) useStore.getState().addBrowserTab(url)
+          else setActiveWidget({ type: 'browser', data: { url } })
+          return false
+        }
+
         // explore [path]
         if (input === 'explore' || input.startsWith('explore ')) {
           const pluginEnabled = plugins.find(p => p.id === 'file-explorer')?.enabled ?? true
@@ -821,6 +886,19 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           const backspaces = '\x7f'.repeat(currentInputRef.current.length)
           window.fterm.ptyWrite(instanceId, backspaces)
           setActiveWidget({ type: 'snippets' })
+          window.fterm.ptyWrite(instanceId, '\r\n')
+          currentInputRef.current = ''
+          if (ac) updateAcUI(null)
+          autocompleteRef.current = null
+          return false
+        }
+
+        // note / notes (scratchpad)
+        if (input === 'note' || input === 'notes') {
+          e.preventDefault()
+          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
+          window.fterm.ptyWrite(instanceId, backspaces)
+          setActiveWidget({ type: 'notes-pad' })
           window.fterm.ptyWrite(instanceId, '\r\n')
           currentInputRef.current = ''
           if (ac) updateAcUI(null)
@@ -981,6 +1059,16 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
               baseY: term.buffer.active.baseY,
               rows: term.rows,
             })
+            // Sync scroll across sibling panes in the same tab (opt-in setting).
+            if (useStore.getState().settings.syncPaneScroll && !syncingScroll && !isTUI()) {
+              syncingScroll = true
+              try {
+                for (const [key, otherTerm] of terminalInstances) {
+                  if (key === instanceId || !key.startsWith(tabId + '-')) continue
+                  try { otherTerm.scrollToLine(viewportY) } catch { /* disposed */ }
+                }
+              } finally { syncingScroll = false }
+            }
           })
         })
       })(),
@@ -1584,6 +1672,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             onRun={(cmd) => window.fterm.ptyWrite(instanceId, cmd + '\r')}
           />
         )}
+        {activeWidget?.type === 'notes-pad' && (
+          <NotesWidget key="notes-pad" onClose={closeWidget} />
+        )}
         {activeWidget?.type === 'ftermfetch' && (
           <FtermfetchWidget key="ftermfetch" onClose={closeWidget} />
         )}
@@ -1598,6 +1689,19 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         )}
         {vizWidget && (
           <VisualizerWidget key="visualizer" onClose={() => { setVizWidget(null); setTimeout(() => termRef.current?.focus(), 50) }} initialPath={vizWidget.data?.path} />
+        )}
+        {activeWidget?.type === 'browser' && (
+          <motion.div
+            key="browser"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.18 }}
+            className="absolute inset-0 z-30"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <BrowserView initialUrl={activeWidget.data?.url} onClose={closeWidget} />
+          </motion.div>
         )}
         {activeWidget?.type === 'clipboard' && (
           <ClipboardWidget

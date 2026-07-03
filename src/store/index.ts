@@ -1,5 +1,29 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
+
+// Throttled localStorage: zustand persist writes synchronously on EVERY state change.
+// During AI streaming, appendChatContent fires per chunk (dozens/sec), each triggering a
+// blocking localStorage.setItem of the whole persisted blob. Collapse rapid writes to one
+// trailing write per second. Streaming messages are excluded from partialize, so nothing
+// is lost; a beforeunload flush guarantees the final state is saved on close.
+const throttledStorage: StateStorage = (() => {
+  const pending = new Map<string, string>()
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const flush = () => {
+    for (const [k, v] of pending) { try { localStorage.setItem(k, v) } catch { /* quota */ } }
+    pending.clear()
+    timer = null
+  }
+  if (typeof window !== 'undefined') window.addEventListener('beforeunload', flush)
+  return {
+    getItem: (name) => localStorage.getItem(name),
+    removeItem: (name) => { pending.delete(name); localStorage.removeItem(name) },
+    setItem: (name, value) => {
+      pending.set(name, value)
+      if (!timer) timer = setTimeout(flush, 1000)
+    },
+  }
+})()
 import type {
   Tab, Theme, PetConfig, AIConfig, AppSettings,
   PetState, AIProvider, AIProviderStatus, ChatMessage,
@@ -106,6 +130,29 @@ interface FTermState {
   updateSnippet: (id: string, updates: Partial<{ name: string; command: string; description: string }>) => void
   deleteSnippet: (id: string) => void
 
+  // SSH hosts
+  sshHosts: import('../types').SshHost[]
+  addSshHost: (host: Omit<import('../types').SshHost, 'id'>) => void
+  updateSshHost: (id: string, updates: Partial<Omit<import('../types').SshHost, 'id'>>) => void
+  deleteSshHost: (id: string) => void
+  connectSshHost: (id: string) => void
+
+  // Notes scratchpad
+  notes: import('../types').Note[]
+  addNote: () => string
+  updateNote: (id: string, updates: Partial<Pick<import('../types').Note, 'title' | 'body'>>) => void
+  deleteNote: (id: string) => void
+
+  // Browser bookmarks
+  bookmarks: import('../types').Bookmark[]
+  addBookmark: (title: string, url: string) => void
+  removeBookmark: (url: string) => void
+
+  // Browser history — session-only, never persisted (privacy)
+  browserHistory: import('../types').BrowserHistoryEntry[]
+  addHistory: (title: string, url: string) => void
+  clearHistory: () => void
+
   // Saved layouts
   savedLayouts: { id: string; name: string; tabCount: number; profileIds: (string | undefined)[] }[]
   saveCurrentLayout: (name: string) => void
@@ -117,14 +164,19 @@ interface FTermState {
   addTab: (profileId?: string) => void
   addTabWithCommand: (command: string, cwd?: string, title?: string) => void
   addEditorTab: (content?: string, language?: string, filePath?: string) => void
+  addBrowserTab: (url?: string) => void
   setEditorContent: (tabId: string, content: string) => void
   setEditorLanguage: (tabId: string, language: string) => void
   setEditorFilePath: (tabId: string, filePath: string) => void
   closeTab: (id: string) => void
+  detachTabAway: (id: string) => void
+  adoptTab: (tab: Tab) => void
+  setTabBrowserUrl: (id: string, url: string) => void
   closeOtherTabs: (id: string) => void
   duplicateTab: (id: string) => void
   setActiveTab: (id: string) => void
   updateTabTitle: (id: string, title: string) => void
+  setTabColor: (id: string, color: string) => void
   setTabOscTitle: (id: string, title: string) => void
   reorderTabs: (fromIndex: number, toIndex: number) => void
   setTabPid: (tabId: string, paneId: string, pid: number) => void
@@ -231,6 +283,7 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   'new-tab':        'ctrl+t',
   'close-tab':      'ctrl+w',
   'command-palette':'ctrl+shift+p',
+  'command-builder':'ctrl+k',
   'search':         'ctrl+shift+f',
   'next-tab':       'ctrl+tab',
   'prev-tab':       'ctrl+shift+tab',
@@ -246,11 +299,39 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const TAB_PALETTE = ['#58a6ff', '#3fb950', '#d29922', '#f78166', '#bc8cff', '#39c5cf', '#ff7b72', '#e3b341']
+export const TAB_PALETTE = ['#58a6ff', '#3fb950', '#d29922', '#f78166', '#bc8cff', '#39c5cf', '#ff7b72', '#e3b341']
 
 let tabCounter = 0
 let paneCounter = 0
 let splitCounter = 0
+
+// Tab tear-out: a window spawned by detaching a tab carries ?adopt=<token>.
+export const ADOPT_TOKEN: string | null =
+  typeof location !== 'undefined' ? new URLSearchParams(location.search).get('adopt') : null
+export const IS_DETACHED = !!ADOPT_TOKEN
+/** Raise the tab-id counter base (used to namespace detached-window tab ids). */
+export function setTabCounterBase(n: number) { if (n > tabCounter) tabCounter = n }
+
+/** Curated config slice handed to a torn-off window so it looks identical to its origin. */
+export function getConfigSnapshot() {
+  const s = useStore.getState()
+  return {
+    settings: s.settings,
+    activeThemeId: s.activeThemeId,
+    themes: s.themes,
+    ai: s.ai,
+    pet: s.pet,
+    petProgress: s.petProgress,
+    keybindings: s.keybindings,
+    profiles: s.profiles,
+    plugins: s.plugins,
+    snippets: s.snippets,
+    bookmarks: s.bookmarks,
+    savedLayouts: s.savedLayouts,
+    profileCwds: s.profileCwds,
+    ftermfetchConfig: s.ftermfetchConfig,
+  }
+}
 
 const newPaneId = () => `pane-${++paneCounter}`
 const newSplitId = () => `split-${++splitCounter}`
@@ -560,7 +641,72 @@ export const useStore = create<FTermState>()(
         snippets: s.snippets.filter(sn => sn.id !== id)
       })),
 
+      // SSH hosts — key/agent auth only; never store passwords
+      sshHosts: [],
+      addSshHost: (host) => set(s => ({
+        sshHosts: [...s.sshHosts, { ...host, id: `ssh-${Date.now()}` }]
+      })),
+      updateSshHost: (id, updates) => set(s => ({
+        sshHosts: s.sshHosts.map(h => h.id === id ? { ...h, ...updates } : h)
+      })),
+      deleteSshHost: (id) => set(s => ({
+        sshHosts: s.sshHosts.filter(h => h.id !== id)
+      })),
+      connectSshHost: (id) => {
+        const host = get().sshHosts.find(h => h.id === id)
+        if (!host) return
+        const args = ['-p', String(host.port ?? 22)]
+        if (host.identityFile) args.push('-i', host.identityFile)
+        if (host.extraArgs?.trim()) args.push(...host.extraArgs.trim().split(/\s+/))
+        args.push(`${host.user}@${host.host}`)
+        const profileId = id // sshHosts ids are already `ssh-…`
+        set(s => ({
+          profiles: s.profiles.some(p => p.id === profileId)
+            ? s.profiles.map(p => p.id === profileId ? { ...p, name: host.label, shell: 'ssh.exe', args } : p)
+            : [...s.profiles, { id: profileId, name: host.label, icon: 'Globe', shell: 'ssh.exe', args }]
+        }))
+        get().addTab(profileId)
+        // Label the freshly created tab with the host name
+        set(s => ({
+          tabs: s.tabs.map(t => t.id === s.activeTabId ? { ...t, title: host.label } : t)
+        }))
+      },
+
+      // Notes scratchpad
+      notes: [],
+      addNote: () => {
+        const id = `note-${Date.now()}`
+        set(s => ({ notes: [{ id, title: 'Untitled', body: '', updatedAt: Date.now() }, ...s.notes] }))
+        return id
+      },
+      updateNote: (id, updates) => set(s => ({
+        notes: s.notes.map(n => n.id === id ? { ...n, ...updates, updatedAt: Date.now() } : n)
+      })),
+      deleteNote: (id) => set(s => ({
+        notes: s.notes.filter(n => n.id !== id)
+      })),
+
       // Saved layouts
+      bookmarks: [],
+      addBookmark: (title, url) => set(s => s.bookmarks.some(b => b.url === url)
+        ? {}
+        : { bookmarks: [...s.bookmarks, { id: `bm-${Date.now()}`, title: title || url, url }] }),
+      removeBookmark: (url) => set(s => ({ bookmarks: s.bookmarks.filter(b => b.url !== url) })),
+
+      // Session-only browsing history (excluded from persist partialize)
+      browserHistory: [],
+      addHistory: (title, url) => set(s => {
+        if (!url || url === 'about:blank') return {}
+        // Collapse consecutive duplicates of the same URL.
+        if (s.browserHistory[0]?.url === url) {
+          const [first, ...rest] = s.browserHistory
+          return { browserHistory: [{ ...first, title: title || first.title, visitedAt: Date.now() }, ...rest] }
+        }
+        const entry = { id: `h-${Date.now()}`, title: title || url, url, visitedAt: Date.now() }
+        return { browserHistory: [entry, ...s.browserHistory].slice(0, 500) }
+      }),
+      clearHistory: () => set({ browserHistory: [] }),
+
       savedLayouts: [],
       saveCurrentLayout: (name) => set(s => {
         const profileIds = s.tabs.map(t => t.layout?.profileId)
@@ -625,6 +771,41 @@ export const useStore = create<FTermState>()(
         }
         set(s => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' }))
       },
+      addBrowserTab: (url?: string) => {
+        const tab: Tab = {
+          id: `tab-${++tabCounter}`,
+          title: 'Browser',
+          color: TAB_PALETTE[(tabCounter - 1) % TAB_PALETTE.length],
+          type: 'browser',
+          browserUrl: url || 'https://duckduckgo.com',
+        }
+        set(s => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' }))
+      },
+      // Remove a tab that has been torn off into another window. Unlike closeTab,
+      // this does NOT kill the PTY sessions — they live on in the new window.
+      detachTabAway: (id) => {
+        const { tabs, activeTabId } = get()
+        if (tabs.length <= 1) return
+        const idx = tabs.findIndex(t => t.id === id)
+        if (idx === -1) return
+        const remaining = tabs.filter(t => t.id !== id)
+        const nextActive = activeTabId === id
+          ? remaining[Math.max(0, idx - 1)]?.id ?? remaining[0].id
+          : activeTabId
+        set({ tabs: remaining, activeTabId: nextActive })
+      },
+      // Receive a tab dragged in from another window (merge-back).
+      adoptTab: (tab) => {
+        const n = parseInt(String(tab.id).replace(/^tab-/, ''), 10)
+        if (!isNaN(n)) setTabCounterBase(n)
+        set(s => s.tabs.some(t => t.id === tab.id)
+          ? { activeTabId: tab.id, activeView: 'terminal' }
+          : { tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' })
+      },
+      // Track the live URL of a browser tab so it survives window moves (re-opens same page).
+      setTabBrowserUrl: (id, url) => set(s => ({
+        tabs: s.tabs.map(t => t.id === id ? { ...t, browserUrl: url } : t)
+      })),
       setEditorContent: (tabId, content) => set(s => ({
         tabs: s.tabs.map(t => t.id === tabId ? { ...t, editorContent: content } : t)
       })),
@@ -676,6 +857,7 @@ export const useStore = create<FTermState>()(
       },
       setActiveTab: (id) => set({ activeTabId: id }),
       updateTabTitle: (id, title) => set(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, title, manualTitle: true } : t) })),
+      setTabColor: (id, color) => set(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, color } : t) })),
       setTabOscTitle: (id, title) => set(s => ({ tabs: s.tabs.map(t => t.id === id && !t.manualTitle ? { ...t, title } : t) })),
       reorderTabs: (fromIndex, toIndex) => set(s => {
         const newTabs = [...s.tabs]
@@ -1126,6 +1308,7 @@ export const useStore = create<FTermState>()(
         cursorBlink: true,
         scrollback: 10000,
         copyOnSelect: true,
+        syncPaneScroll: false,
         showRecordingButton: true,
         showAIAutoFixButton: true,
         explorerOpenInTerminal: true,
@@ -1150,13 +1333,30 @@ export const useStore = create<FTermState>()(
       setRemoteTerminal: (updates) => set(s => ({ remoteTerminal: { ...s.remoteTerminal, ...updates } })),
     }),
     {
-      name: 'fterm-v1',
+      // Detached windows persist to their own key so they never clobber the main
+      // window's tab list (and don't rehydrate it on open).
+      name: IS_DETACHED ? `fterm-win-${ADOPT_TOKEN}` : 'fterm-v1',
+      storage: createJSONStorage(() => throttledStorage),
       merge: (persisted: any, current) => {
         // Sync tabCounter so new tabs never collide with rehydrated tab IDs
         if (persisted?.tabs?.length) {
           for (const t of persisted.tabs) {
             const n = parseInt(String(t.id).replace('tab-', ''), 10)
             if (!isNaN(n) && n > tabCounter) tabCounter = n
+            // Sync pane/split counters too — otherwise a split after reload reuses an
+            // existing paneId, giving two panes the same instanceId (tab-X-pane-N).
+            // That binds both panes to the same PTY session → input/output in both.
+            if (t.layout) {
+              const walk = (node: SplitNode) => {
+                const pn = parseInt(String(node.paneId ?? '').replace('pane-', ''), 10)
+                if (!isNaN(pn) && pn > paneCounter) paneCounter = pn
+                const sn = parseInt(String(node.id ?? '').replace('split-', ''), 10)
+                if (!isNaN(sn) && sn > splitCounter) splitCounter = sn
+                if (node.first) walk(node.first)
+                if (node.second) walk(node.second)
+              }
+              walk(t.layout)
+            }
           }
         }
         return ({
@@ -1186,6 +1386,9 @@ export const useStore = create<FTermState>()(
         })(),
         chatMessages: persisted?.chatMessages ?? [],
         snippets: (persisted as any)?.snippets ?? [],
+        sshHosts: (persisted as any)?.sshHosts ?? [],
+        notes: (persisted as any)?.notes ?? [],
+        bookmarks: (persisted as any)?.bookmarks ?? [],
         savedLayouts: (persisted as any)?.savedLayouts ?? [],
         keybindings: { ...DEFAULT_KEYBINDINGS, ...(persisted as any)?.keybindings },
         remoteTerminal: { port: 7681, ...(persisted as any)?.remoteTerminal, enabled: false, pin: '', clients: 0 },
@@ -1230,6 +1433,9 @@ export const useStore = create<FTermState>()(
         },
         plugins: s.plugins,
         snippets: s.snippets,
+        sshHosts: s.sshHosts,
+        notes: s.notes,
+        bookmarks: s.bookmarks,
         savedLayouts: s.savedLayouts,
         keybindings: s.keybindings,
         remoteTerminal: { enabled: false, port: s.remoteTerminal.port, pin: '', clients: 0 },

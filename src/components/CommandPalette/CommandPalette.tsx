@@ -22,7 +22,7 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const { addTab, closeTab, activeTabId, tabs, setActiveTab, profiles, ai, setAIConfig, setSettings, setActiveView, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, addTab: addTabFn } = useStore()
+  const { addTab, closeTab, activeTabId, tabs, setActiveTab, profiles, ai, setAIConfig, setSettings, setActiveView, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, addTab: addTabFn, sshHosts, connectSshHost } = useStore()
   const [layoutNamePrompt, setLayoutNamePrompt] = useState(false)
   const [layoutName, setLayoutName] = useState('')
 
@@ -88,6 +88,14 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
       action: () => addTab(p.id)
     }))
 
+    const sshHostActions: PaletteAction[] = sshHosts.map(h => ({
+      id: `ssh-${h.id}`,
+      label: `SSH: ${h.label}`,
+      group: 'SSH',
+      icon: <Play size={14} />,
+      action: () => connectSshHost(h.id)
+    }))
+
     const themeActions: PaletteAction[] = THEMES.map(t => ({
       id: `theme-${t.id}`,
       label: `Theme: ${t.name}`,
@@ -96,8 +104,8 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
       action: () => setTheme(t.id)
     }))
 
-    return [...baseActions, ...snippetActions, ...savedLayoutActions, ...deletedLayoutActions, ...tabActions, ...profileActions, ...themeActions]
-  }, [addTab, addTabFn, closeTab, activeTabId, ai.sidebarOpen, setAIConfig, setSettings, setActiveView, onToggleSearch, tabs, setActiveTab, profiles, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout])
+    return [...baseActions, ...snippetActions, ...savedLayoutActions, ...deletedLayoutActions, ...tabActions, ...profileActions, ...sshHostActions, ...themeActions]
+  }, [addTab, addTabFn, closeTab, activeTabId, ai.sidebarOpen, setAIConfig, setSettings, setActiveView, onToggleSearch, tabs, setActiveTab, profiles, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, sshHosts, connectSshHost])
 
   const filtered = useMemo(() => {
     if (!query) return actions
