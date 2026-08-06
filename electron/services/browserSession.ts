@@ -1,5 +1,4 @@
 import { app, session, BrowserWindow, Session, DownloadItem } from 'electron'
-import { ElectronBlocker } from '@ghostery/adblocker-electron'
 import fetch from 'cross-fetch'
 import { join, extname, basename, resolve, relative, isAbsolute } from 'path'
 import { existsSync, writeFileSync, readFileSync, cpSync, rmSync } from 'fs'
@@ -16,7 +15,6 @@ export const BROWSER_PARTITION = 'persist:fterm-browser'
 export const BROWSER_SESSION_PARTITION = 'fterm-browser-session'
 
 let blockedCount = 0
-let blocker: ElectronBlocker | null = null
 let initialized = false
 
 // Active downloads, keyed by a monotonic id so the renderer can address them.
@@ -31,8 +29,30 @@ function broadcast(channel: string, payload: any) {
   }
 }
 
+// Blocked-request bursts arrive dozens at a time on ad-heavy pages; coalesce the
+// IPC so we push at most one stats event per 500ms.
+let statsTimer: NodeJS.Timeout | null = null
 function broadcastStats() {
-  broadcast('browser:adblock-stats', { blocked: blockedCount })
+  if (statsTimer) return
+  statsTimer = setTimeout(() => {
+    statsTimer = null
+    broadcast('browser:adblock-stats', { blocked: blockedCount })
+  }, 500)
+}
+
+/**
+ * Count requests killed by uBOL. MV3 declarativeNetRequest gives no JS callback,
+ * but a cancelled request surfaces as `net::ERR_BLOCKED_BY_CLIENT` on the passive
+ * `onErrorOccurred` event — no blocking listener involved, so none of the
+ * webRequest-blocking instability applies here.
+ */
+function installBlockCounter(sess: Session) {
+  sess.webRequest.onErrorOccurred((details) => {
+    if (details.error && details.error.includes('ERR_BLOCKED_BY_CLIENT')) {
+      blockedCount++
+      broadcastStats()
+    }
+  })
 }
 
 /** Strip path separators / control chars from a remote-supplied filename. */
@@ -501,49 +521,13 @@ export async function initBrowserSession(): Promise<void> {
   await loadUbol(sess)
   scheduleUbolUpdates()
 
-  try {
-    // Ads-only (EasyList): blocks ads but — unlike the +tracking list — does NOT block
-    // YouTube's player API / video CDN, so playback works. Cosmetic filtering disabled
-    // to avoid CSS rules hiding video containers.
-    blocker = await ElectronBlocker.fromPrebuiltAdsOnly(fetch)
-    // Disable cosmetic filtering. The library registers a single GLOBAL
-    // ipcMain.handle('@ghostery/adblocker/inject-cosmetic-filters') per session
-    // enable() — enabling on both the persistent and ephemeral partitions throws
-    // "Attempted to register a second handler". It also injects a preload that
-    // runs executeJavaScript on every frame (the "Script failed to execute"
-    // rejections). We only want network blocking, so turn cosmetics off entirely.
-    ;(blocker.config as { loadCosmeticFilters: boolean }).loadCosmeticFilters = false
-    // Belt-and-suspenders: explicitly allow YouTube's playback domains.
-    try {
-      blocker.updateFromDiff({
-        added: [
-          '@@||youtube.com^',
-          '@@||www.youtube.com^',
-          '@@||youtubei.googleapis.com^',
-          '@@||googlevideo.com^',
-          '@@||ytimg.com^',
-          '@@||ggpht.com^',
-          '@@||youtube-nocookie.com^',
-          '@@||jnn-pa.googleapis.com^',
-        ],
-      })
-    } catch { /* engine version may differ; non-fatal */ }
-    // Ghostery's ElectronBlocker network filtering (enableBlockingInSession →
-    // session.webRequest.onBeforeRequest) corrupts the BROWSER process and segfaults it
-    // after processing many requests (confirmed via minidumps: ptype=browser,
-    // ACCESS_VIOLATION at varying addresses; reproducible only with this blocker on).
-    // It is also redundant: uBOL's native DNR blocking covers ads/trackers, and the
-    // YouTube innertube scrub (YT_PROGRAM) handles in-video ads. So we DO NOT enable
-    // Ghostery's webRequest blocking. We still install the YouTube CSP strip (needed so
-    // the YT_PROGRAM script injection runs) and keep the engine loaded for stats.
-    installCspStrip(sess)
-    installCspStrip(ephemeral)
-    blocker.on('request-blocked', () => { blockedCount++; broadcastStats() })
-    blocker.on('request-redirected', () => { blockedCount++; broadcastStats() })
-  } catch (err) {
-    // Network unavailable on first run → browser still works, just without blocking.
-    console.error('[browser] adblock init failed:', err)
-  }
+  // Blocking is uBOL (native DNR) + the YouTube innertube scrub. A JS engine
+  // (Ghostery ElectronBlocker) used to run here too, but its webRequest filter
+  // corrupted the BROWSER process and segfaulted it after many requests
+  // (minidumps: ptype=browser, ACCESS_VIOLATION at varying addresses), and it was
+  // redundant with uBOL — so it is gone. Stats now come from the passive counter.
+  installBlockCounter(sess)
+  installBlockCounter(ephemeral)
 }
 
 /**
@@ -615,24 +599,30 @@ export async function clearBrowsingData(opts?: ClearDataOptions): Promise<void> 
 
 let adblockEnabled = true
 
-/** Toggle ad/tracker blocking for the in-app browser at runtime. Returns new state. */
-export function setAdblockEnabled(on: boolean): boolean {
-  if (!blocker) return adblockEnabled
-  const sessions = [
-    session.fromPartition(BROWSER_PARTITION),
-    session.fromPartition(BROWSER_SESSION_PARTITION),
-  ]
-  for (const sess of sessions) {
-    // NOTE: deliberately NOT calling blocker.enableBlockingInSession — its webRequest
-    // filter segfaults the browser process after many requests (see initBrowser comment).
-    // uBOL (native DNR) + the YouTube scrub are the active blockers. Just reassert the
-    // YouTube CSP strip so script injection keeps working regardless of toggle state.
-    installCspStrip(sess)
+/**
+ * Toggle ad/tracker blocking at runtime by loading / unloading the uBOL extension —
+ * the only component that actually cancels requests. The YouTube scriptlet and the
+ * CSP strip stay installed either way (in-page surgery, not network blocking).
+ */
+export async function setAdblockEnabled(on: boolean): Promise<boolean> {
+  if (on === adblockEnabled) return adblockEnabled
+  const sess = session.fromPartition(BROWSER_PARTITION)
+  if (on) {
+    await loadUbol(sess)
+  } else if (ubolSession && ubolExtId) {
+    try {
+      const api: any = (ubolSession as any).extensions ?? ubolSession
+      api.removeExtension?.(ubolExtId)
+      ubolLoaded = false
+    } catch (err) {
+      console.error('[browser] uBOL unload failed:', err)
+      return adblockEnabled
+    }
   }
   adblockEnabled = on
   return adblockEnabled
 }
 
 export function getAdblockStats() {
-  return { blocked: blockedCount, ready: !!blocker, enabled: adblockEnabled }
+  return { blocked: blockedCount, ready: ubolLoaded, enabled: adblockEnabled }
 }

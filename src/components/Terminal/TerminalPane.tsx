@@ -11,6 +11,9 @@ import '@xterm/xterm/css/xterm.css'
 import { useStore, useActiveTheme, getOrderedPaneIds } from '@/store'
 import { useAI } from '@/hooks/useAI'
 import { isErrorOutput, analyzeOutput } from '@/utils/petReactions'
+import { parseOsc133 } from '@/utils/shellIntegration'
+import { CommandBlockTracker, registerTracker, disposeTracker } from '@/services/CommandBlocks'
+import CommandBlocksPanel from './CommandBlocksPanel'
 import ContextMenu from '@/components/ContextMenu/ContextMenu'
 import { pluginManager } from '@/plugins'
 import { AnimatePresence, motion } from 'motion/react'
@@ -58,6 +61,18 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const [scrollInfo, setScrollInfo] = useState({ viewportY: 0, baseY: 0, rows: 0 })
   const errorMarkersRef = useRef<Array<{ id: number; line: number; getContext: () => string }>>([])
   const [errorVer, setErrorVer] = useState(0)
+  const blockTrackerRef = useRef<CommandBlockTracker | null>(null)
+  const [showBlocks, setShowBlocks] = useState(false)
+  // Mirrored into a ref: xterm's key handler is registered once and would
+  // otherwise close over the initial state value forever.
+  const showBlocksRef = useRef(false)
+  const setBlocksPanel = useCallback((next: boolean | ((v: boolean) => boolean)) => {
+    setShowBlocks(prev => {
+      const value = typeof next === 'function' ? next(prev) : next
+      showBlocksRef.current = value
+      return value
+    })
+  }, [])
   const [inTuiMode, setInTuiMode] = useState(false)
   const scrollbarDragRef = useRef<{ startY: number; startViewportY: number } | null>(null)
   const closeWidget = useCallback(() => {
@@ -356,6 +371,8 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       errorMarkersRef.current = [];
       lastErrorMarkerLine = -1;
       recentDataBuf = '';
+      // A cleared screen invalidates every recorded block row too.
+      blockTrackerRef.current?.reset();
       setErrorVer(v => v + 1);
     };
 
@@ -370,6 +387,22 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         if (/^\/[A-Za-z]:[\\/]/.test(cwd)) cwd = cwd.slice(1)
         if (cwd) updateTabCwd(tabId, paneId, cwd)
       } catch { /* ignore malformed */ }
+      return true
+    })
+
+    // OSC 133: shell integration — prompt / command-finished markers that let us
+    // slice the scrollback into command blocks.
+    const blockTracker = new CommandBlockTracker(term, instanceId)
+    registerTracker(instanceId, blockTracker)
+    blockTrackerRef.current = blockTracker
+    const osc133Disposable = term.parser.registerOscHandler(133, (data) => {
+      const evt = parseOsc133(data)
+      if (!evt) return true
+      if (evt.kind === 'D') blockTracker.onCommandFinished(evt.exitCode)
+      else if (evt.kind === 'A') {
+        const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd ?? ''
+        blockTracker.onPrompt(cwd)
+      }
       return true
     })
 
@@ -655,6 +688,32 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           term.clearSelection()
           return false
         }
+      }
+
+      // ── Command blocks ───────────────────────────────────────────────────
+      // Ctrl+Shift+Up/Down jumps prompt to prompt; Ctrl+Shift+B opens the list.
+      // Handled here (not in App.tsx) because xterm stops key propagation, and
+      // suspended in TUI mode where these keys belong to the running app.
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && !e.altKey && !isTUI()) {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          const tracker = blockTrackerRef.current
+          const target = tracker?.findAdjacent(e.key === 'ArrowUp' ? -1 : 1)
+          if (target) tracker!.revealBlock(target.id)
+          else if (e.key === 'ArrowDown') term.scrollToBottom()
+          return false
+        }
+        if (e.key === 'B' || e.key === 'b') {
+          e.preventDefault()
+          setBlocksPanel(v => !v)
+          return false
+        }
+      }
+      // Escape closes the block list before anything else consumes the key.
+      if (e.type === 'keydown' && e.key === 'Escape' && showBlocksRef.current) {
+        e.preventDefault()
+        setBlocksPanel(false)
+        return false
       }
 
       // Ctrl+Alt+Arrow — navigate between panes; must be handled here because xterm stops propagation
@@ -1095,6 +1154,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         if (data === '\r' || data === '\n') {
           if (currentInputRef.current.trim()) {
             useStore.getState().addCommandHistory(currentInputRef.current.trim());
+            // Opens a command block anchored at the current prompt row.
+            const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd ?? '';
+            blockTrackerRef.current?.onCommandStart(currentInputRef.current.trim(), cwd);
           }
           currentInputRef.current = '';
           autocompleteRef.current = null;
@@ -1240,6 +1302,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       osc7Disposable.dispose()
       osc0Disposable.dispose()
       osc2Disposable.dispose()
+      osc133Disposable.dispose()
+      disposeTracker(instanceId)
+      blockTrackerRef.current = null
       disposeAllDecorations()
       disposables.forEach(d => d.dispose())
       // We DO NOT call window.fterm.ptyKill(instanceId) anymore to persist the PTY backgrounds
@@ -1606,6 +1671,16 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           }}
         />
       )}
+
+      <AnimatePresence>
+        {showBlocks && (
+          <CommandBlocksPanel
+            key="command-blocks"
+            instanceId={instanceId}
+            onClose={() => { setBlocksPanel(false); termRef.current?.focus() }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Widget overlays */}
       <AnimatePresence>

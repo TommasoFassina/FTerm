@@ -59,6 +59,8 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 
 ### Terminal
 - **Real PTY shell** — full pseudoterminal emulation via `node-pty` and `xterm.js`
+- **Command blocks** — OSC 133 shell integration slices the scrollback into one block per command, each with its exit code, duration and cwd. `Ctrl+Shift+↑/↓` jumps prompt to prompt, `Ctrl+Shift+B` opens the session's command list (scroll to a command, copy it or its output, preview inline), and a coloured rail in the gutter marks running / succeeded / failed
+- **Drop-down terminal** — a global hotkey summons FTerm over any application and tucks it away again; configurable edge, size, monitor and hide-on-blur (Settings → General)
 - **Split panes** — horizontal and vertical splits per tab, navigate with `Ctrl+Alt+Arrow`
 - **Multiple tabs** — open, close, and switch terminal tabs
 - **Remote terminal** — connect to remote shells over WebSocket; full mobile control surface with Term / AI / Tools tabs, sticky modifier key bar, quick-launcher chips, and widget parity (file explorer, system monitor, docker, weather, ping, port scanner, clipboard)
@@ -90,8 +92,9 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 
 ### Customization
 - **Themes** — GitHub Dark, Dracula, Tokyo Night, Cyberpunk, Nord, and a full custom theme editor
+- **Theme import** — load iTerm2 `.itermcolors` files and Windows Terminal colour schemes (single scheme, array, or an entire `settings.json`)
 - **Font & background** — set font family, size, and a custom background image with blur/opacity control
-- **Tamagotchi pet** — animated ASCII companion (cat, dog, dragon, robot, ghost, fox) that reacts to what you type
+- **Tamagotchi pet** — animated ASCII companion (cat, dog, dragon, robot, ghost, fox) that reacts to what you type, earns achievements and coins from real terminal activity, and wears ASCII cosmetics bought in the wardrobe
 
 ---
 
@@ -180,10 +183,16 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `Ctrl+Shift+C` | Copy selection (Ctrl+C alone sends SIGINT, or copies if text is selected) |
 | `Shift+Arrow` | Keyboard selection in terminal |
 | `Ctrl+Shift+L` | Force redraw (escape hatch for stuck TUI ghosting) |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Jump to previous / next command prompt |
+| `Ctrl+Shift+B` | Toggle the command block list for the pane |
+| _(configurable)_ | Summon / hide the drop-down terminal — set your own hotkey in Settings → General |
 
 ---
 
 ## AI Providers
+
+> [!WARNING]
+> **Bring-your-own-API-key setup is deprecated.** Configuring an AI provider by pasting a personal API key is no longer the direction FTerm is going, and this path may be removed in a future release. Nothing breaks today — existing keys keep working and stay encrypted in the OS keychain — but AI features are planned to become zero-configuration, detecting AI CLIs already authenticated on your machine (`claude`, `gh copilot`, `ollama`) instead of asking for a key. If you rely on a manual key, watch the [changelog](CHANGELOG.md) before upgrading.
 
 Configure API keys in **Settings → AI**. Keys are stored in the OS keychain via Electron `safeStorage` and never sent back to the renderer process.
 
@@ -374,13 +383,26 @@ Planned features and ideas — contributions welcome.
 - **Inline diff view** — when AI suggests a code fix, show a side-by-side diff before applying it to a file in the Monaco editor
 - **Voice input** — push-to-talk to dictate commands or chat messages
 
+### Distribution
+- **In-app updates** — check the installed version against the latest GitHub release and update in place, instead of downloading the installer by hand
+- **Code signing** — remove the SmartScreen warning on Windows installs
+
 ### Terminal
+- ✅ **Command blocks** — OSC 133 shell integration; prompt-to-prompt navigation, per-command exit code and timing, copy output without selecting
+- ✅ **Drop-down terminal** — global hotkey summons FTerm over any application
 - **Session restore** — reconnect to a detached PTY session after FTerm restarts (tmux-style persistence)
 - **Broadcast input** — type once, send to all open panes simultaneously
 - **Scrollback search with regex** — highlight all matches in the scrollback buffer, not just navigate one by one
+- **Collapsible command output** — fold a noisy block in place. Blocked on xterm.js: its buffer is a flat grid with no concept of hidden rows, so folding needs a buffer rewrite rather than a decoration. The block list's inline preview covers the same need for now.
+
+### Themes
+- ✅ **Import iTerm2 / Windows Terminal schemes** — `.itermcolors` files and Windows Terminal `settings.json` colour schemes
+- **Per-profile theme** — bind a theme to a shell profile so each context looks distinct
 
 ### Pet
-- **Pet achievements** — unlock cosmetics (hats, accessories) by hitting coding milestones
+- ✅ **Pet achievements** — 15 achievements from real terminal activity, paying coins
+- ✅ **Cosmetics shop** — spend coins on hats and accessories, most gated behind their achievement
+- ✅ **Git-aware reactions** — the pet celebrates commits, cheers pushes and worries about merge conflicts
 - **Pet export** — export your pet's stats and history as a shareable card
 
 ---
@@ -417,7 +439,10 @@ electron/                        # Main process (Node.js / Electron)
 │   ├── aiService.ts             # AI provider routing + streaming over IPC
 │   ├── secureStore.ts           # OS keychain via safeStorage
 │   ├── githubOAuth.ts           # GitHub OAuth device flow + Copilot token exchange
+│   ├── quakeMode.ts             # Drop-down terminal: global hotkey + window geometry
 │   └── remoteTerminalServer.ts  # WebSocket server for remote PTY sessions
+├── security/
+│   └── validators.ts            # Pure, Electron-free security checks (+ tests)
 └── video/
     ├── FrameRenderer.ts         # Canvas-based terminal frame renderer
     ├── SceneDetector.ts         # Command/error scene detection from events
@@ -427,7 +452,12 @@ src/                             # Renderer (React + TypeScript, no Node access)
 ├── App.tsx                      # Root layout
 ├── store/index.ts               # Zustand store (tabs, themes, pet, AI, settings)
 ├── services/
+│   ├── CommandBlocks.ts         # OSC 133 command-block tracking, one tracker per pane
 │   └── TerminalRecorder.ts      # Captures terminal snapshots + command events
+├── utils/
+│   ├── shellIntegration.ts      # OSC 133 protocol parsing (+ tests)
+│   ├── themeImport.ts           # iTerm2 / Windows Terminal scheme importers (+ tests)
+│   └── petAchievements.ts       # Achievements, coins and cosmetics rules (+ tests)
 └── components/
     ├── Terminal/                 # xterm.js + PTY, split panes, recording controls, history search
     ├── Widgets/                  # File explorer, sys-mon, docker, weather, ping, port-scan, snippets, audio visualizer, clipboard

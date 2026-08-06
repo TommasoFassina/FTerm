@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm'
 import { useStore } from '@/store'
 import { SPRITES, STATE_HEX_COLORS } from '@/components/Pet/PetData'
+import { getCosmetic } from '@/utils/petAchievements'
 
 export interface FrameSnapshot {
   timestamp: number
@@ -193,6 +194,17 @@ export class TerminalRecorder {
           petSprite = stateSprites[frameIdx]
           petColor = STATE_HEX_COLORS[petState] ?? '#58a6ff'
           petName = pet.name || undefined
+          // Equipped cosmetic rides along as an extra first line, space-padded
+          // to centre it over the sprite. FrameRenderer draws every pet line
+          // from the same left edge, so padding is all the alignment it needs —
+          // and the name/bubble shift up on their own since they are positioned
+          // from the line count.
+          const cosmetic = getCosmetic(pet.equippedCosmetic)
+          if (cosmetic) {
+            const spriteWidth = Math.max(...petSprite.split('\n').map(l => l.length))
+            const pad = Math.max(0, Math.round((spriteWidth - cosmetic.glyph.length) / 2))
+            petSprite = ' '.repeat(pad) + cosmetic.glyph + '\n' + petSprite
+          }
         }
       }
     } catch {}

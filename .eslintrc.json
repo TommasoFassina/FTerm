@@ -31,5 +31,15 @@
     "no-empty": ["error", { "allowEmptyCatch": true }],
     "prefer-const": "error",
     "no-extra-semi": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["electron/**/*.ts"],
+      "env": { "node": true, "browser": false },
+      "rules": {
+        "@typescript-eslint/no-require-imports": "off",
+        "no-constant-condition": ["error", { "checkLoops": false }]
+      }
+    }
+  ]
 }

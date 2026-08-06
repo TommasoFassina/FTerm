@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { useStore, DEFAULT_KEYBINDINGS } from '@/store'
 import { useAI } from '@/hooks/useAI'
 import type { AIProvider, QuickAction } from '@/types'
+import { DEFAULT_QUAKE_SETTINGS } from '@/types'
 
 type Tab = 'general' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
 
@@ -136,6 +137,8 @@ function GeneralTab() {
           Acrylic blur uses Windows 11 native DWM. Lower opacity to see the effect. Requires restart if toggled.
         </p>
       </Section>
+
+      <QuakeSection />
 
       <Section title="Cursor">
         <Row label="Style">
@@ -336,7 +339,20 @@ function AITab() {
   const { ai, setAIConfig, settings, setSettings } = useStore()
 
   return (
-    <div className="columns-1 md:columns-2 gap-6 mb-12 [&>*]:break-inside-avoid [&>*]:mb-6">
+    <>
+      {/* Deprecation notice — see CHANGELOG [Unreleased] */}
+      <div className="mb-6 rounded border border-[#9e6a03] bg-[#bb800911] px-3 py-2">
+        <p className="text-xs text-[#e3b341] font-medium mb-1">API key setup is deprecated</p>
+        <p className="text-[11px] text-[#8b949e] leading-relaxed">
+          Connecting a provider with your own API key may be removed in a future release. Nothing breaks
+          today — existing keys keep working and stay encrypted in the OS keychain. AI features are planned
+          to become zero-configuration, detecting AI CLIs already authenticated on your machine
+          (<code className="text-[#6e7681]">claude</code>, <code className="text-[#6e7681]">gh copilot</code>,
+          {' '}<code className="text-[#6e7681]">ollama</code>) instead of asking for a key.
+        </p>
+      </div>
+
+      <div className="columns-1 md:columns-2 gap-6 mb-12 [&>*]:break-inside-avoid [&>*]:mb-6">
       {/* API key providers */}
       {PROVIDERS.map(p => (
         <APIKeySection key={p.id} provider={p} />
@@ -428,7 +444,8 @@ function AITab() {
 
       {/* Quick actions */}
       <QuickActionsEditor />
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -1173,6 +1190,127 @@ function PetTab() {
         </Section>
       )}
     </div>
+  )
+}
+
+// ─── Quake / drop-down mode ──────────────────────────────────────────────────
+
+/** Translate a DOM keydown into an Electron accelerator string. */
+function accelFromEvent(e: React.KeyboardEvent): string | null {
+  const mods: string[] = []
+  if (e.ctrlKey) mods.push('Ctrl')
+  if (e.altKey) mods.push('Alt')
+  if (e.shiftKey) mods.push('Shift')
+  if (e.metaKey) mods.push('Super')
+  if (!mods.length) return null
+
+  const NAMED: Record<string, string> = {
+    ' ': 'Space', Enter: 'Return', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
+    Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp',
+    PageDown: 'PageDown', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  }
+  let key = e.key
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return null   // modifier alone
+  if (NAMED[key]) key = NAMED[key]
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(key)) { /* keep as-is */ }
+  else if (key.length === 1) key = key.toUpperCase()
+  else return null
+  return [...mods, key].join('+')
+}
+
+function QuakeSection() {
+  const { settings, setSettings } = useStore()
+  const q = { ...DEFAULT_QUAKE_SETTINGS, ...(settings.quake ?? {}) }
+  const [status, setStatus] = useState<{ registered: boolean; error?: string } | null>(null)
+  const [capturing, setCapturing] = useState(false)
+
+  const update = (patch: Partial<typeof q>) => setSettings({ quake: { ...q, ...patch } })
+
+  // The main process is the authority on whether the hotkey was actually
+  // granted — another app may already own the combination.
+  useEffect(() => {
+    let alive = true
+    const t = setTimeout(() => {
+      window.fterm?.quakeStatus?.().then(s => { if (alive) setStatus(s) }).catch(() => { })
+    }, 150)
+    return () => { alive = false; clearTimeout(t) }
+  }, [settings.quake])
+
+  return (
+    <Section title="Drop-down terminal">
+      <p className="text-xs text-white/40 -mt-1 mb-1">
+        Summon FTerm from any application with a global hotkey. The window slides in over
+        whatever you were doing and tucks away when you press the key again.
+      </p>
+      <Row label="Enabled">
+        <Toggle value={q.enabled} onChange={v => update({ enabled: v })} />
+      </Row>
+      <Row label="Hotkey">
+        <button
+          onKeyDown={e => {
+            if (!capturing) return
+            e.preventDefault()
+            if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey) { setCapturing(false); return }
+            const accel = accelFromEvent(e)
+            if (accel) { update({ hotkey: accel }); setCapturing(false) }
+          }}
+          onClick={() => setCapturing(c => !c)}
+          onBlur={() => setCapturing(false)}
+          className={`px-2 py-1 rounded border font-mono text-xs min-w-[7rem] transition-colors ${
+            capturing
+              ? 'border-blue-500 bg-blue-500/20 text-blue-300'
+              : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'
+          }`}
+        >
+          {capturing ? 'Press keys…' : q.hotkey}
+        </button>
+      </Row>
+      {q.enabled && status && !status.registered && (
+        <p className="text-[10px] text-[#e3b341]">
+          {status.error || 'Hotkey not registered'} — pick a different combination.
+        </p>
+      )}
+      <Row label="Drops from">
+        <select
+          value={q.position}
+          onChange={e => update({ position: e.target.value as 'top' | 'bottom' })}
+          className="input"
+        >
+          <option value="top">Top</option>
+          <option value="bottom">Bottom</option>
+        </select>
+      </Row>
+      <Row label="Height">
+        <Slider min={20} max={100} step={5} value={q.height} onChange={v => update({ height: v })} />
+      </Row>
+      <Row label="Width">
+        <Slider min={30} max={100} step={5} value={q.width} onChange={v => update({ width: v })} />
+      </Row>
+      <Row label="Monitor">
+        <select
+          value={q.monitor}
+          onChange={e => update({ monitor: e.target.value as 'cursor' | 'primary' })}
+          className="input"
+        >
+          <option value="cursor">Under cursor</option>
+          <option value="primary">Primary</option>
+        </select>
+      </Row>
+      <Row label="Hide when focus is lost">
+        <Toggle value={q.hideOnBlur} onChange={v => update({ hideOnBlur: v })} />
+      </Row>
+      <Row label="Slide animation">
+        <Toggle value={q.animate} onChange={v => update({ animate: v })} />
+      </Row>
+      {q.enabled && (
+        <button
+          onClick={() => window.fterm?.quakeExit?.()}
+          className="w-full mt-1 py-1 rounded border border-white/10 text-xs text-white/50 hover:text-white/80 hover:bg-white/5 transition-colors"
+        >
+          Restore normal window
+        </button>
+      )}
+    </Section>
   )
 }
 

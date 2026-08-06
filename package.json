@@ -1,6 +1,6 @@
 {
   "name": "fterm",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A modern AI-powered terminal with pet companion",
   "author": {
     "name": "Tommaso Fassina",
@@ -18,18 +18,21 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "npm run clean:out && tsc && vite build && electron-builder",
     "preview": "vite preview",
     "electron:dev": "vite",
-    "electron:build": "vite build && electron-builder",
-    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "electron:build": "npm run clean:out && vite build && electron-builder",
+    "clean:out": "node -e \"const{rmSync}=require('fs');for(const d of ['dist','dist-electron'])rmSync(d,{recursive:true,force:true})\"",
+    "lint": "eslint src electron --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fetch:ubol": "node scripts/fetch-ubol.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
-    "@ghostery/adblocker-electron": "^2.18.0",
     "@monaco-editor/react": "^4.7.0",
     "@types/adm-zip": "^0.5.8",
     "@types/qrcode": "^1.5.6",
@@ -42,7 +45,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^5.5.0",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "canvas": "^3.2.3",
     "clsx": "^2.1.1",
     "cross-fetch": "^4.1.0",
@@ -75,7 +78,7 @@
     "@types/react-dom": "^18.2.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "@vitejs/plugin-react": "^4.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.4.0",
     "concurrently": "^8.2.0",
     "electron": "^42.3.3",
@@ -86,9 +89,10 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.0",
-    "vite": "^5.0.0",
-    "vite-plugin-electron": "^0.28.0",
-    "vite-plugin-electron-renderer": "^0.14.0",
+    "vite": "^7.3.6",
+    "vite-plugin-electron": "^1.1.0",
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vitest": "^3.2.7",
     "wait-on": "^7.2.0"
   },
   "build": {
@@ -101,7 +105,8 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "electron/services/ftermfetch.ps1"
     ],
     "extraResources": [
       {
@@ -134,7 +139,12 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "differentialPackage": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "mac": {
       "target": [
@@ -147,6 +157,9 @@
         }
       ],
       "category": "public.app-category.developer-tools"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [
@@ -163,12 +176,9 @@
           ]
         }
       ],
-      "category": "Development"
+      "category": "Development",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "TommasoFassina",
-      "repo": "FTerm"
-    }
+    "publish": null
   }
 }

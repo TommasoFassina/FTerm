@@ -111,6 +111,8 @@ import { startDeviceFlow, pollForToken, startRedirectFlow, clearCopilotToken } f
 import { startPKCEFlow } from './services/pkceOAuth'
 import { gitService } from './services/gitService'
 import { composeVideo } from './video/VideoComposer'
+import { isWithinRoots, isValidContainerId, GITHUB_TOKEN_RE } from './security/validators'
+import * as quake from './services/quakeMode'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: BrowserWindow | null = null
@@ -364,9 +366,6 @@ ipcMain.handle('keys:listConnected', () => listConnected())
 
 // ─── GitHub OAuth device flow IPC ────────────────────────────────────────────
 
-// GitHub tokens: gho_/ghu_/ghs_/ghp_/ghr_ prefixes (modern) or 40-char hex (legacy)
-const GITHUB_TOKEN_RE = /^(gh[oupsr]_[A-Za-z0-9_]{30,255}|[a-f0-9]{40})$/
-
 function assertTokenFormat(token: string, re: RegExp, label: string): void {
   if (typeof token !== 'string' || !re.test(token)) throw new Error(`Invalid ${label} token format`)
 }
@@ -488,6 +487,14 @@ ipcMain.on('shell:open-path', (_e, filePath: string) => {
 
 ipcMain.handle('window:is-maximized', (e) => senderWin(e)?.isMaximized() ?? false)
 
+// ─── Quake / drop-down mode IPC ──────────────────────────────────────────────
+
+ipcMain.handle('quake:configure', (_e, cfg: unknown) => quake.configureQuake(cfg))
+ipcMain.handle('quake:status', () => quake.getQuakeStatus())
+ipcMain.on('quake:toggle', () => quake.toggleQuake())
+ipcMain.on('quake:hide', () => quake.hideQuake())
+ipcMain.on('quake:exit', () => quake.exitQuake())
+
 // ─── System Metrics IPC ───────────────────────────────────────────────────────
 
 ipcMain.handle('system:metrics', async () => {
@@ -585,17 +592,8 @@ const FS_READDIR_ROOTS: string[] = [
 ].map(p => require('path').resolve(p))
 
 function isPathAllowed(inputPath: string): boolean {
-  const path = require('path')
-  if (typeof inputPath !== 'string' || inputPath.length === 0) return false
-  // Resolve first to collapse `..` segments — only then compare against allowlist.
-  let resolved: string
-  try { resolved = path.resolve(inputPath) } catch { return false }
-  if (!path.isAbsolute(resolved)) return false
-  const norm = path.normalize(resolved)
-  return FS_READDIR_ROOTS.some(root => {
-    const r = path.normalize(root)
-    return norm === r || norm.startsWith(r.endsWith(path.sep) ? r : r + path.sep)
-  })
+  // Resolves + collapses `..` before comparing against the allowlist.
+  return isWithinRoots(inputPath, FS_READDIR_ROOTS)
 }
 
 ipcMain.handle('fs:readdir', (_e, dirPath: string) => {
@@ -679,7 +677,7 @@ ipcMain.handle('docker:ps', async () => {
 
 ipcMain.handle('docker:logs', async (_e, containerId: string) => {
   // Validate container ID format (hex or name: alphanumeric, dash, underscore, dot); max 64 chars
-  if (typeof containerId !== 'string' || containerId.length > 64 || !/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(containerId)) throw new Error('Invalid container ID')
+  if (!isValidContainerId(containerId)) throw new Error('Invalid container ID')
   try {
     const { stdout, stderr } = await execFileAsync('docker', ['logs', '--tail', '50', containerId])
     return (stdout || '') + (stderr || '')
@@ -689,7 +687,7 @@ ipcMain.handle('docker:logs', async (_e, containerId: string) => {
 })
 
 ipcMain.handle('docker:action', async (_e, id: string, action: 'start' | 'stop') => {
-  if (typeof id !== 'string' || id.length > 64 || !/^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$/.test(id)) throw new Error('Invalid container ID')
+  if (!isValidContainerId(id)) throw new Error('Invalid container ID')
   if (action !== 'start' && action !== 'stop') throw new Error('Invalid action')
   try {
     await execFileAsync('docker', [action, id])
@@ -1252,6 +1250,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
+      // Hidden because quake tucked it off-screen — a second launch should
+      // bring the app back rather than silently do nothing.
+      if (!mainWindow.isVisible()) mainWindow.show()
       mainWindow.focus()
     }
   })
@@ -1371,6 +1372,8 @@ app.whenReady().then(() => {
 
   registerAIHandlers()
   initBrowserSession()  // adblock + hardened partition for in-app browser (non-blocking)
+  // Quake drives the primary window; the renderer pushes the persisted config on mount.
+  quake.initQuakeMode(() => mainWindow)
   createWindow()
 
   clipLastSeen = clipboard.readText() || ''
@@ -1419,8 +1422,13 @@ ipcMain.handle('browser:ubol-info', () => getUbolInfo())
 ipcMain.handle('browser:ubol-check', () => checkUbolUpdateNow())
 ipcMain.handle('browser:ubol-autoupdate', (_e, on: boolean) => setUbolAutoUpdate(!!on))
 
+app.on('will-quit', () => {
+  quake.disposeQuakeMode()   // release the global hotkey back to the OS
+})
+
 app.on('window-all-closed', () => {
   remoteTerminal.stop().catch(() => { })
+  quake.disposeQuakeMode()
   clearCopilotToken()
   if (clipPollTimer) { clearInterval(clipPollTimer); clipPollTimer = null }
   pty.killAll()   // all windows gone → tear down every PTY session

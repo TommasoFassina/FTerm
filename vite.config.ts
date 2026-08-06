@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import { resolve } from 'path'
+import { createRequire } from 'module'
+
+const pkg = createRequire(import.meta.url)('./package.json')
 
 export default defineConfig({
   plugins: [
@@ -54,6 +57,12 @@ export default defineConfig({
     ]),
     renderer(),
   ],
+  // Single source of truth for the version shown in the UI. The main process
+  // uses app.getVersion() instead; both ultimately read package.json, so a
+  // release bump can never leave a stale number on screen again.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

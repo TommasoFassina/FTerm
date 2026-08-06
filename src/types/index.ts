@@ -136,6 +136,14 @@ export interface PetConfig {
   xp: number
   maxXp: number
   stats: PetStats
+  /** Currency earned from achievements and git activity; spent in the cosmetics shop. */
+  coins?: number
+  /** Ids of achievements already paid out (see `utils/petAchievements`). */
+  achievements?: string[]
+  /** Cosmetic ids the user has bought. */
+  ownedCosmetics?: string[]
+  /** Cosmetic currently worn above the sprite, or null. */
+  equippedCosmetic?: string | null
 }
 
 export type AIProvider = 'claude' | 'openai' | 'copilot' | 'ollama' | 'gemini' | 'deepseek' | 'none'
@@ -271,6 +279,37 @@ export interface AppSettings {
   }
   /** In-app browser: auto-update the bundled uBlock Origin Lite from GitHub. Default on. */
   browserUbolAutoUpdate?: boolean
+  /** Drop-down (quake) terminal — toggled from anywhere by a global hotkey. */
+  quake?: QuakeSettings
+}
+
+export interface QuakeSettings {
+  enabled: boolean
+  /** Electron accelerator, e.g. `Ctrl+\``. Validated in the main process. */
+  hotkey: string
+  /** Screen edge the window drops from. */
+  position: 'top' | 'bottom'
+  /** Height as a percent of the display work area (20–100). */
+  height: number
+  /** Width as a percent of the display work area (30–100). */
+  width: number
+  /** Drop onto the display under the cursor, or always the primary one. */
+  monitor: 'cursor' | 'primary'
+  /** Hide again the moment the window loses focus. */
+  hideOnBlur: boolean
+  /** Slide in, instead of appearing instantly. */
+  animate: boolean
+}
+
+export const DEFAULT_QUAKE_SETTINGS: QuakeSettings = {
+  enabled: false,
+  hotkey: 'Ctrl+`',
+  position: 'top',
+  height: 45,
+  width: 100,
+  monitor: 'cursor',
+  hideOnBlur: true,
+  animate: true,
 }
 
 export interface GitStatus {

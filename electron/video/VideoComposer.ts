@@ -8,7 +8,7 @@ import { detectScenes } from './SceneDetector'
 import type { FrameSnapshot, CommandEvent } from '../../src/services/TerminalRecorder'
 
 function unpackedPath(p: string): string {
-  return p.replace(/[\/\\]app\.asar[\/\\]/, '/app.asar.unpacked/')
+  return p.replace(/[/\\]app\.asar[/\\]/, '/app.asar.unpacked/')
 }
 
 const resolvedFfmpegPath = ffmpegPath ? unpackedPath(ffmpegPath) : null

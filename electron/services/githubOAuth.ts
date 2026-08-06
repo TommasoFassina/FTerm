@@ -11,7 +11,7 @@
 import * as http from 'http'
 import * as net from 'net'
 import * as crypto from 'crypto'
-import { shell } from 'electron'
+import { app, shell } from 'electron'
 
 const DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const TOKEN_URL = 'https://github.com/login/oauth/access_token'
@@ -185,7 +185,7 @@ export async function getCopilotToken(githubToken: string): Promise<string> {
   const res = await fetch('https://api.github.com/copilot_internal/v2/token', {
     headers: {
       Authorization: `Bearer ${githubToken}`,
-      'Editor-Version': 'FTerm/0.1.0',
+      'Editor-Version': `FTerm/${app.getVersion()}`,
       'User-Agent': 'FTerm',
     },
   })

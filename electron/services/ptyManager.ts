@@ -27,19 +27,40 @@ export function deployFtermFetch(): string {
     const dir = join(app.getPath('appData'), 'fterm')
     mkdirSync(dir, { recursive: true })
     const dest = join(dir, 'ftermfetch.ps1')
-    // Always overwrite so updates ship with new app versions
-    const src = join(__dirname, 'ftermfetch.ps1')
-    const content = existsSync(src)
-      ? readFileSync(src, 'utf8')
-      : readFileSync(join(__dirname, '..', 'electron', 'services', 'ftermfetch.ps1'), 'utf8')
-    // UTF-8 BOM (\ufeff) required for PowerShell 5.1 to read Unicode correctly
-    writeFileSync(dest, '\ufeff' + content, 'utf8')
+
+    // The ftermfetch script is optional. It used to be read inside the same try
+    // block as the shell init files below, so a missing script took the init
+    // scripts down with it \u2014 and with them OSC 7 / 9998 / 133 on cmd, bash and
+    // fish. Shell integration is far more important than the banner, so its
+    // failure is isolated here.
+    let scriptDeployed = false
+    try {
+      // Always overwrite so updates ship with new app versions
+      const src = join(__dirname, 'ftermfetch.ps1')
+      const raw = existsSync(src)
+        ? readFileSync(src, 'utf8')
+        : readFileSync(join(__dirname, '..', 'electron', 'services', 'ftermfetch.ps1'), 'utf8')
+      // Stamp the real app version in, so the banner can never drift from the
+      // release the way a hardcoded string does.
+      const content = raw.replace(/__FTERM_VERSION__/g, app.getVersion())
+      // UTF-8 BOM (\ufeff) required for PowerShell 5.1 to read Unicode correctly
+      writeFileSync(dest, '\ufeff' + content, 'utf8')
+      scriptDeployed = true
+    } catch {
+      console.warn('[ftermfetch] script not found \u2014 shell integration continues without it')
+    }
+
     // cmd init batch: DOSKEY macro + OSC 7 + OSC 9998 exit-code prompt (language-agnostic error detection)
     // $E]9998;%ERRORLEVEL%$E\ emits exit code each prompt redraw so renderer can show AI fix button
-    const cmdPromptStr = String.raw`$E]7;file://localhost/$P$E\$E]9998;%ERRORLEVEL%$E\$P$G`
+    // OSC 133;D (command finished + exit code) and OSC 133;A (prompt starts here)
+    // drive the command-block tracker in the renderer. `B`/`C` are intentionally
+    // not emitted — see src/utils/shellIntegration.ts.
+    const cmdPromptStr = String.raw`$E]7;file://localhost/$P$E\$E]9998;%ERRORLEVEL%$E\$E]133;D;%ERRORLEVEL%$E\$E]133;A$E\$P$G`
     const initBat = [
       '@echo off',
-      `doskey ftermfetch=powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${dest}"`,
+      ...(scriptDeployed
+        ? [`doskey ftermfetch=powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${dest}"`]
+        : []),
       `prompt ${cmdPromptStr}`,
     ].join('\r\n') + '\r\n'
     writeFileSync(join(dir, 'fterm_init.bat'), initBat, 'ascii')
@@ -52,6 +73,8 @@ export function deployFtermFetch(): string {
       '  local s=$?',
       '  printf "\\033]7;file://localhost${PWD}\\007"',
       '  printf "\\033]9998;${s}\\007"',
+      // OSC 133;D + 133;A — command blocks (see src/utils/shellIntegration.ts)
+      '  printf "\\033]133;D;${s}\\007\\033]133;A\\007"',
       '}',
       'PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__fterm_prompt"',
       'ftermfetch() { printf "\\033[1;34mftermfetch\\033[0m: running via FTerm widget\\n"; }',
@@ -62,7 +85,10 @@ export function deployFtermFetch(): string {
     // Fish init snippet (written to a file; fish -C sources it)
     const fishInit = [
       'function __fterm_prompt',
+      '  set -l s $status',
       '  printf "\\033]7;file://localhost$PWD\\007"',
+      '  printf "\\033]9998;%s\\007" $s',
+      '  printf "\\033]133;D;%s\\007\\033]133;A\\007" $s',
       'end',
       'function __fterm_precmd --on-event fish_prompt',
       '  __fterm_prompt',
@@ -73,7 +99,9 @@ export function deployFtermFetch(): string {
     ].join('\n') + '\n'
     writeFileSync(join(dir, 'fterm_init.fish'), fishInit, 'utf8')
 
-    ftermfetchScriptPath = dest
+    // '' signals "no script" to callers, which skip the PowerShell wrapper —
+    // the init scripts above are written either way.
+    ftermfetchScriptPath = scriptDeployed ? dest : ''
   } catch {
     ftermfetchScriptPath = ''
   }
@@ -136,7 +164,12 @@ export function createSession(
 
   // OSC 7: CWD + OSC 9998: exit code. Capture $? and $LASTEXITCODE FIRST before any Write resets $?
   const osc7Emit = String.raw`$p=$pwd.Path -replace '\\','/';[Console]::Write([char]27+']7;file://localhost/'+$p+[char]7)`
-  const pwshPromptFn = String.raw`$_e=$LASTEXITCODE;$LASTEXITCODE=0;${osc7Emit};[Console]::Write([char]27+']9998;'+$(if($_e -gt 0) {'1'} else {'0'})+[char]7);return ($pwd.Path+'> ')`
+  // OSC 133;D carries the real exit code (0 when the shell reported none), then
+  // 133;A marks the prompt row — together they delimit command blocks in the
+  // renderer. Emitted via Console::Write rather than inside the returned prompt
+  // string: invisible sequences in the prompt confuse PSReadLine's width maths.
+  const osc133Emit = String.raw`[Console]::Write([char]27+']133;D;'+$(if($null -ne $_e){[string][int]$_e}else{'0'})+[char]7+[char]27+']133;A'+[char]7)`
+  const pwshPromptFn = String.raw`$_e=$LASTEXITCODE;$LASTEXITCODE=0;${osc7Emit};[Console]::Write([char]27+']9998;'+$(if($_e -gt 0) {'1'} else {'0'})+[char]7);${osc133Emit};return ($pwd.Path+'> ')`
   const pwshInit = [
     'try { Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue } catch {}',
     `function prompt { ${pwshPromptFn} }`,

@@ -106,7 +106,10 @@ $logoArt = @(
     "${C}${B}  ╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝${R}"
 )
 $logoWidth = visLen $logoArt[0]   # measure visual width from first line
-$tagline   = "${C2}  ── The AI-Powered Terminal  ${P}v0.1.1  ${D}↑ ${Wh}${upStr}${R}"
+# __FTERM_VERSION__ is substituted with app.getVersion() by deployFtermFetch()
+# in ptyManager.ts when the script is written to appData — never hardcode it.
+$ftermVersion = '__FTERM_VERSION__'
+$tagline   = "${C2}  ── The AI-Powered Terminal  ${P}v${ftermVersion}  ${D}↑ ${Wh}${upStr}${R}"
 
 [Console]::WriteLine('')
 

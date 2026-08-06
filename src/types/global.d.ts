@@ -11,6 +11,15 @@ export interface BrowserDownload {
   paused: boolean
 }
 
+export interface QuakeStatus {
+  /** True when the global hotkey is currently held by FTerm. */
+  registered: boolean
+  /** Set when registration failed — typically another app owns the combo. */
+  error?: string
+  /** True while the window is being driven as a drop-down. */
+  active: boolean
+}
+
 export interface DeviceCodeResponse {
   device_code: string
   user_code: string
@@ -101,6 +110,12 @@ interface FTermAPI {
   setWindowPosition: (x: number, y: number) => void
   getWindowPosition: () => Promise<[number, number]>
   isMaximized: () => Promise<boolean>
+  quakeConfigure: (cfg: import('./index').QuakeSettings) => Promise<QuakeStatus>
+  quakeStatus: () => Promise<QuakeStatus>
+  quakeToggle: () => void
+  quakeHide: () => void
+  quakeExit: () => void
+  onQuakeState: (cb: (s: QuakeStatus & { visible: boolean }) => void) => () => void
   openExternal: (url: string) => void
   openPath: (filePath: string) => void
   onHistorySearch: (cb: () => void) => () => void

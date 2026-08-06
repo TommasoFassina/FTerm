@@ -2,6 +2,62 @@
 
 All notable changes to FTerm are documented here.
 
+## [0.1.5] — 2026-08-06
+
+### Deprecated
+> **The bring-your-own-API-key AI setup is deprecated and may be removed in a future release.**
+>
+> Connecting an AI provider by pasting a personal API key (Settings → AI: Claude, OpenAI, Gemini, DeepSeek) is no longer the direction FTerm is going. Requiring a paid API key before the terminal is useful was the wrong trade, and the machinery around it — the GitHub Copilot OAuth device flow, the multi-provider picker, the Claude usage-stats panel — costs maintenance for features that see very little use.
+>
+> **Nothing breaks today.** Existing keys keep working, stay encrypted in the OS keychain, and are still never handed back to the renderer. No removal date is set.
+>
+> **The likely replacement** is zero-configuration detection of AI CLIs already authenticated on your machine (`claude`, `gh copilot`, `ollama`), with the AI sidebar and inline autocomplete simply not appearing when no backend is present. That work has not started; manual API keys, if kept, would move to an advanced setting.
+>
+> **If you rely on a manual API key**, expect this path to change and check the changelog before upgrading.
+>
+> The same notice appears in the README and at the top of Settings → AI.
+
+### Security
+- **Ping / port-scan allowlist bypass in the remote terminal:** `isPrivateTarget()` accepted any hostname starting with `fc` or `fd` — the check for IPv6 unique-local addresses was a bare `startsWith` applied to every input, so `fd-cdn.example.com` or `fcatalog.evil.com` passed as "private". A hijacked remote session could use the host to probe arbitrary public hosts. IPv6 prefix rules now only apply to actual IPv6 literals (input containing `:`), and the ranges are matched properly (`fe80::/10`, `fc00::/7`).
+
+### Added
+- **Command blocks (OSC 133 shell integration)** — the scrollback is no longer an undifferentiated wall of text. FTerm's prompt hooks now emit the standard `OSC 133;D;<exit>` / `OSC 133;A` markers (PowerShell, CMD, bash/zsh, fish), and the renderer slices the buffer into blocks: one per command, with its exit code, wall-clock duration and cwd.
+  - `Ctrl+Shift+↑` / `Ctrl+Shift+↓` jump prompt to prompt.
+  - `Ctrl+Shift+B` opens the block list for the pane — every command in the session with status and timing; click to scroll to it, or copy the command / its output without dragging a selection. Output preview is inline.
+  - A coloured rail in the left gutter marks each command: blue while running, green on success, red on failure.
+  - **Copy Last Command Output** added to the command palette.
+  - `B` (prompt end) and `C` (output start) are deliberately not emitted — invisible sequences inside the prompt string break PSReadLine's prompt-width accounting on Windows. Both boundaries are derived in the renderer instead, which already knows when Enter was pressed.
+  - Blocks are per-pane, capped at 200, and never persisted. Sessions opened before this release need a tab restart to pick up the new prompt hooks.
+- **Drop-down (quake) terminal** — a global hotkey summons FTerm over whatever you are doing and tucks it away again, from any application. Configurable in Settings → General: hotkey (recorded by pressing the combination), drop edge (top/bottom), height and width as a percent of the display, target monitor (under the cursor or primary), hide-on-blur and slide animation. The window follows onto other virtual desktops, and "Restore normal window" (Settings or the command palette) puts it back exactly where it was before quake took it over. Accelerators are validated against an allowlist before registration, and a combination already owned by another application is reported inline instead of failing silently.
+- **Theme import** — Settings → Themes now reads **iTerm2 `.itermcolors`** files and **Windows Terminal** color schemes (a single scheme, an array, or an entire `settings.json`, comments and trailing commas included — every scheme inside is imported). Hundreds of published schemes now work in FTerm without hand-transcribing twenty hex values.
+- **Pet progression** — the companion is now wired to what you actually do.
+  - **15 achievements** driven by real activity: commands run, commits made, streak length, night-owl hours, distinct commands used, level, errors survived, days active. Each pays coins; progress bars show the next goal.
+  - **Coins** also drop from live events — commits (+15), pushes (+10), level-ups (+25).
+  - **Wardrobe**: 12 cosmetics, most gated behind their achievement. Buying, equipping and taking off are all reversible. Cosmetics and achievement badges are **ASCII**, not emoji — the pet is monospace art and the cosmetic sits directly on it.
+  - The equipped cosmetic is a child of the sprite element, centred on the sprite's own width (which differs per species) and anchored exactly one line above it. It inherits the pet's state colour, moves with every hop, shake and pulse, and appears in **session recordings** — space-padded into the captured sprite so `FrameRenderer` places it without special handling. The Pet view's avatar previews it with the same anchoring.
+  - Achievements are swept on startup and whenever the Pet view opens, so anything already earned is paid out immediately instead of waiting for the next command.
+  - **Real git events reach the pet**: committing celebrates, pushing cheers, and a newly detected merge conflict worries it (once, on the transition — not on every refresh).
+- **Unit tests** (`vitest`): `npm test` / `npm run test:watch`. 88 cases covering the security validators (path containment, sensitive-file detection, network-target allowlist, Docker container ids, GitHub token shape, global-shortcut accelerators), the OSC 133 protocol parser, the theme importers and the pet progression rules.
+- `electron/security/validators.ts` — the security validators that were duplicated between `main.ts` and `remoteTerminalServer.ts` now live in one Electron-free module so they can be tested directly. Behaviour is unchanged apart from the IPv6 fix above and stricter rejection of non-string input. Now also home to `isValidAccelerator()`, which gates the quake hotkey: modifiers from a fixed set, exactly one non-modifier key, and never a bare key — registering one globally would swallow it for every application on the machine.
+- Shell init scripts gained `OSC 9998` on **fish**, which previously had exit-code reporting only on the other shells.
+
+### Fixed
+- **`ftermfetch.ps1` was never packaged.** `build.files` shipped only `dist/**` and `dist-electron/**`, and nothing copied the script into either — so in an installed build the read failed. Worse, that read sat in the same `try` block as the shell init files, so its failure also skipped `fterm_init.bat`, `fterm_init.sh` and `fterm_init.fish`: **cmd, bash and fish silently lost OSC 7 (cwd tracking), OSC 9998 (exit codes) and, as of this release, OSC 133 (command blocks)** in packaged builds. The script is now included in `build.files`, and its deployment is isolated so a missing script can never take shell integration down with it.
+- **Stale build chunks were being shipped.** `dist-electron` was never emptied between builds, so hashed chunks from previous runs accumulated and were packaged into `app.asar` (9 entries where 4 were live). `npm run build` / `npm run electron:build` now run `clean:out` first.
+- **Version numbers no longer drift.** Four were hardcoded and all disagreed: the `ftermfetch` banner said `v0.1.1`, the ftermfetch widget `v0.1.4`, and the Copilot `Editor-Version` header `FTerm/0.1.0`. They now come from one source — `app.getVersion()` in the main process (substituted into the `.ps1` at deploy time) and a build-time `__APP_VERSION__` constant in the renderer, both reading `package.json`.
+- **Ad-block counter always showed 0:** the badge in the browser toolbar was fed by Ghostery `request-blocked` events, but Ghostery's network blocking was disabled (it segfaulted the browser process), so the counter never moved. Blocks are now counted from `net::ERR_BLOCKED_BY_CLIENT` on the passive `webRequest.onErrorOccurred` event — which is what uBOL's declarativeNetRequest blocking actually emits — with the stats IPC coalesced to one event per 500 ms.
+- **Ad-block toggle was a no-op:** turning the shield off left uBOL loaded and everything still blocked. `setAdblockEnabled()` now loads/unloads the uBOL extension, which is the component that actually cancels requests.
+
+### Changed
+- **Removed the Ghostery adblocker engine** (`@ghostery/adblocker-electron`). It was dead weight: blocking stayed disabled after the browser-process crash, so all it did was download the EasyList prebuilt engine on every startup. uBOL (MV3 DNR) + the YouTube innertube scrub remain the active blockers.
+- Command palette gained a **Widgets** group — every widget (explorer, sys-mon, docker, weather, ping, portscan, snippets, notes, clipboard, ftermfetch, browser, visualizer) is now reachable without typing its terminal command.
+- **Emoji replaced with ASCII across the app's own chrome.** The welcome overlay's feature icons, the pet's cosmetics and achievement badges, the coin counter and the pet's git messages are all monospace text now. FTerm is a terminal and its art is ASCII; emoji read as pasted in from somewhere else. (User-authored content — AI persona labels, pet dialogue — is untouched.)
+- The welcome overlay's feature grid now advertises **command blocks** in place of the AI-first framing.
+- Lint now covers `electron/` as well as `src/`; dependencies updated (audit clean).
+- **Release builds now fetch uBlock Origin Lite themselves.** `electron/vendor/ubol` is git-ignored (uBOL is GPL and is not redistributed in this repository) but `electron-builder` packages it as an extraResource, so a clean checkout — every CI run — had nothing to copy. `scripts/fetch-ubol.mjs` (`npm run fetch:ubol`) pulls the latest `*.chromium.zip` from `uBlockOrigin/uBOL-home`, the same source and asset the in-app updater uses, and the release workflow runs it on all three platforms before building. It is a no-op when the directory already exists, so local builds are unaffected.
+- CI now runs `npm test` alongside typecheck and lint.
+- **Release assets cut from 14 to 6, with no duplicates.** Two publishers were uploading the same binaries: electron-builder's own GitHub publisher (its `publish` config) *and* the `action-gh-release` step, each sanitizing filenames differently — hence `FTerm-Setup-0.1.4.exe` next to `FTerm.Setup.0.1.4.exe`. `publish` is now `null`, so the workflow is the single publisher. Explicit space-free `artifactName` templates keep GitHub from rewriting names, and the `.blockmap` / `latest*.yml` differential-update metadata is no longer generated — FTerm has no auto-updater, so nothing ever consumed it. The release now carries exactly: Windows installer, Windows portable, macOS x64 and arm64 `.dmg`, Linux `.AppImage` and `.deb`.
+
 ## [0.1.4] — 2026-06-06
 
 ### Added

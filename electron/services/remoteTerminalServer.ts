@@ -10,6 +10,7 @@ import * as pty from 'node-pty'
 import { app, BrowserWindow, clipboard } from 'electron'
 import QRCode from 'qrcode'
 import { deployFtermFetch } from './ptyManager'
+import { isSensitivePath, isPrivateTarget, isWithinRoots } from '../security/validators'
 
 const MAX_WS_MESSAGE = 64 * 1024 // 64 KB per message
 const MAX_COLS = 500
@@ -69,32 +70,6 @@ const ALLOWED_ROOTS: string[] = (() => {
   return roots.map(r => path.resolve(r))
 })()
 
-// Files / directories whose contents would expose credentials. Block reads and
-// hide entries from listings. Match by normalized lowercase suffix.
-const SENSITIVE_NAMES = new Set([
-  '.ssh', '.aws', '.gnupg', '.gnupg.d',
-  '.docker', '.kube', '.azure', '.gcp', '.config/gcloud',
-  '.npmrc', '.yarnrc', '.netrc', '.pypirc',
-  'credentials.json', 'credentials',
-  'id_rsa', 'id_ed25519', 'id_dsa', 'id_ecdsa',
-  '.git-credentials',
-])
-const SENSITIVE_EXT = new Set(['.pem', '.key', '.p12', '.pfx', '.keystore', '.jks'])
-const SENSITIVE_REGEX = /(^|[\\/])(\.ssh|\.aws|\.gnupg|\.kube|\.azure|\.docker|\.config[\\/]gcloud|\.config[\\/]gh)([\\/]|$)/i
-
-function isSensitivePath(p: string): boolean {
-  const norm = p.replace(/\\/g, '/').toLowerCase()
-  if (SENSITIVE_REGEX.test(norm)) return true
-  const base = path.basename(p).toLowerCase()
-  if (SENSITIVE_NAMES.has(base)) return true
-  const ext = path.extname(base)
-  if (SENSITIVE_EXT.has(ext)) return true
-  // Common credential / secret filename patterns
-  if (/(^|[._-])(secret|secrets|password|passwords|token|api[_-]?key|private[_-]?key)([._-]|$)/i.test(base)) return true
-  if (/\.env(\.|$)/i.test(base) || base === '.env') return true
-  return false
-}
-
 function isPathSafe(p: string): boolean {
   try {
     const resolved = path.resolve(p)
@@ -114,12 +89,7 @@ function isPathSafe(p: string): boolean {
       if (resolved === '/root' || resolved.startsWith('/root/')) return false
     }
     // Must be within an allowed root
-    const withinRoot = ALLOWED_ROOTS.some(root => {
-      const r = root.toLowerCase()
-      return lower === r || lower.startsWith(r.endsWith(path.sep.toLowerCase()) ? r : r + path.sep.toLowerCase())
-    })
-    if (!withinRoot) return false
-    return true
+    return isWithinRoots(resolved, ALLOWED_ROOTS)
   } catch { return false }
 }
 
@@ -214,35 +184,6 @@ function execAsync(cmd: string, args: string[], timeoutMs = 5000): Promise<{ std
       })
     })
   })
-}
-
-/** Restrict portscan / ping targets to loopback + RFC1918 / link-local / unique-local. */
-function isPrivateTarget(host: string): boolean {
-  const h = host.toLowerCase().trim()
-  if (!h) return false
-  if (h === 'localhost' || h === 'localhost.localdomain') return true
-  // IPv4
-  const m4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (m4) {
-    const a = +m4[1], b = +m4[2]
-    if ([a, b, +m4[3], +m4[4]].some(n => n > 255)) return false
-    if (a === 127) return true                       // loopback
-    if (a === 10) return true                        // 10/8
-    if (a === 172 && b >= 16 && b <= 31) return true // 172.16/12
-    if (a === 192 && b === 168) return true          // 192.168/16
-    if (a === 169 && b === 254) return true          // link-local
-    if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
-    return false
-  }
-  // IPv6: loopback, link-local, unique-local
-  if (h === '::1' || h === '[::1]') return true
-  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true
-  // Hostname without dots resolves on local LAN typically (NetBIOS / mDNS).
-  // Allow short hostnames (no dot) — likely intranet.
-  if (!h.includes('.') && /^[a-z0-9-]+$/.test(h)) return true
-  // .local mDNS suffix
-  if (h.endsWith('.local')) return true
-  return false
 }
 
 async function probePort(host: string, port: number, timeoutMs = 800): Promise<boolean> {

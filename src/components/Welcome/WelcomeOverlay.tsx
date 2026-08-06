@@ -1,13 +1,15 @@
 import { motion } from 'motion/react'
 import { useStore } from '@/store'
 
+// ASCII rather than emoji — this is the first screen of a terminal, and the
+// rest of the app (pet sprites, cosmetics, achievement badges) is monospace art.
 const FEATURES = [
-  { icon: '⌨️', title: 'Real terminal', desc: 'Full PTY shell — bash, PowerShell, zsh, anything.' },
-  { icon: '🤖', title: 'AI sidebar', desc: 'Chat, autocomplete, error fix. Press Ctrl+Shift+A to open.' },
-  { icon: '📦', title: 'Widgets', desc: 'Type sys-mon, explore, docker-dash, ping, weather and more.' },
-  { icon: '🐾', title: 'Pet companion', desc: 'Your ASCII tamagotchi reacts to what you do in the terminal.' },
-  { icon: '🔌', title: 'Plugins', desc: 'Write custom JS plugins that hook into terminal output.' },
-  { icon: '📡', title: 'Remote terminal', desc: 'Control your shell from a phone via QR code.' },
+  { icon: '>_', title: 'Real terminal', desc: 'Full PTY shell — bash, PowerShell, zsh, anything.' },
+  { icon: '[#]', title: 'Command blocks', desc: 'Ctrl+Shift+B lists every command with its exit code and timing.' },
+  { icon: '[*]', title: 'Widgets', desc: 'Type sys-mon, explore, docker-dash, ping, weather and more.' },
+  { icon: '^-^', title: 'Pet companion', desc: 'Your ASCII tamagotchi reacts to what you do in the terminal.' },
+  { icon: '{js}', title: 'Plugins', desc: 'Write custom JS plugins that hook into terminal output.' },
+  { icon: '<->', title: 'Remote terminal', desc: 'Control your shell from a phone via QR code.' },
 ]
 
 export default function WelcomeOverlay() {
@@ -40,7 +42,7 @@ export default function WelcomeOverlay() {
       >
         {/* Header */}
         <div className="px-8 pt-8 pb-4 text-center">
-          <div className="text-3xl mb-3">⚡</div>
+          <div className="font-mono text-3xl text-[#58a6ff] mb-3">&gt;_</div>
           <h1 className="text-xl font-bold text-white mb-1">Welcome to FTerm</h1>
           <p className="text-sm text-white/40">AI-powered terminal with a tamagotchi companion</p>
         </div>
@@ -49,7 +51,7 @@ export default function WelcomeOverlay() {
         <div className="px-6 pb-4 grid grid-cols-2 gap-2">
           {FEATURES.map(f => (
             <div key={f.title} className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3">
-              <div className="text-lg mb-1">{f.icon}</div>
+              <div className="font-mono text-sm text-[#58a6ff]/70 mb-1.5">{f.icon}</div>
               <div className="text-[13px] font-semibold text-white/80 mb-0.5">{f.title}</div>
               <div className="text-[11px] text-white/40 leading-relaxed">{f.desc}</div>
             </div>
@@ -57,18 +59,21 @@ export default function WelcomeOverlay() {
         </div>
 
         {/* Actions */}
+        {/* Connecting a provider is no longer the headline action — the
+            API-key setup is deprecated (see CHANGELOG), so it is offered as a
+            secondary option rather than the first thing a new user is asked. */}
         <div className="px-6 pb-6 flex gap-3">
           <button
-            onClick={goToAI}
+            onClick={dismiss}
             className="flex-1 py-2.5 rounded-lg bg-[#58a6ff] hover:bg-[#79b8ff] text-black font-semibold text-sm transition-colors"
           >
-            Connect AI provider
+            Start exploring
           </button>
           <button
-            onClick={dismiss}
+            onClick={goToAI}
             className="flex-1 py-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white/70 text-sm transition-colors"
           >
-            Start exploring
+            Connect AI provider
           </button>
         </div>
       </motion.div>

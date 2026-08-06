@@ -1,6 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { useStore, useActiveTheme, getOrderedPaneIds, DEFAULT_KEYBINDINGS, IS_DETACHED } from '@/store'
 import { useAIInit } from '@/hooks/useAI'
+import { DEFAULT_QUAKE_SETTINGS } from '@/types'
 import Titlebar from '@/components/Titlebar/Titlebar'
 import PaneLayout from '@/components/Terminal/PaneLayout'
 import SearchBar from '@/components/Terminal/SearchBar'
@@ -105,6 +106,22 @@ export default function App() {
   useEffect(() => {
     window.fterm?.browserUbolSetAutoUpdate?.(settings.browserUbolAutoUpdate !== false).catch(() => {})
   }, [])
+
+  // Back-fill achievements on startup. Without this, anything already earned
+  // before the feature existed (or before the last restart) stays unpaid until
+  // the next command happens to trigger a sweep.
+  useEffect(() => {
+    useStore.getState().checkPetAchievements()
+  }, [])
+
+  // Quake mode lives in the main process (global hotkey + window geometry) but
+  // its config is persisted with the rest of the renderer settings — push it on
+  // startup and on every change so the hotkey matches what Settings shows.
+  useEffect(() => {
+    if (IS_DETACHED) return   // torn-out windows must not fight over the hotkey
+    const cfg = { ...DEFAULT_QUAKE_SETTINGS, ...(settings.quake ?? {}) }
+    window.fterm?.quakeConfigure?.(cfg).catch(() => { })
+  }, [settings.quake])
 
 
   // Global keyboard shortcuts (driven by keybindings store)

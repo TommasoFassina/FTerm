@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useStore, THEMES } from '@/store'
 import { terminalInstances } from '@/components/Terminal/terminalRegistry'
 import { Settings, Search, Play, Terminal, Command, X, Plus, Code2, Save, RotateCcw } from 'lucide-react'
-import { Trash2, Sparkles, Paintbrush } from 'lucide-react'
+import { Trash2, Sparkles, Paintbrush, ChevronsUp, ClipboardCopy } from 'lucide-react'
+import { getTracker } from '@/services/CommandBlocks'
 
 interface PaletteAction {
   id: string
@@ -22,7 +23,7 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const { addTab, closeTab, activeTabId, tabs, setActiveTab, profiles, ai, setAIConfig, setSettings, setActiveView, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, addTab: addTabFn, sshHosts, connectSshHost } = useStore()
+  const { addTab, closeTab, activeTabId, tabs, setActiveTab, profiles, ai, setAIConfig, setSettings, setActiveView, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, addTab: addTabFn, sshHosts, connectSshHost, setPendingWidget, settings } = useStore()
   const [layoutNamePrompt, setLayoutNamePrompt] = useState(false)
   const [layoutName, setLayoutName] = useState('')
 
@@ -36,8 +37,60 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
       { id: 'settings', label: 'Open Settings', group: 'Application', icon: <Settings size={14} />, shortcut: 'Ctrl+,', action: () => setActiveView('settings') },
       { id: 'search', label: 'Search in Terminal', group: 'Terminal', icon: <Search size={14} />, shortcut: 'Ctrl+Shift+F', action: onToggleSearch },
       { id: 'clear', label: 'Clear Output', group: 'Terminal', icon: <Trash2 size={14} />, action: () => { if (activeTabId) terminalInstances.get(`${activeTabId}-0`)?.clear() } },
+      {
+        id: 'copy-last-output',
+        label: 'Copy Last Command Output',
+        group: 'Terminal',
+        icon: <ClipboardCopy size={14} />,
+        action: () => {
+          // Command blocks are per-pane, so read the pane the user is actually in.
+          const tab = tabs.find(t => t.id === activeTabId)
+          const tracker = tab ? getTracker(`${tab.id}-${tab.activePaneId ?? '0'}`) : undefined
+          const blocks = tracker?.getBlocks().filter(b => b.command) ?? []
+          const last = blocks[blocks.length - 1]
+          const text = last ? tracker!.getOutput(last.id) : ''
+          if (text) navigator.clipboard.writeText(text).catch(() => { })
+        },
+      },
       { id: 'save-layout', label: 'Save Current Layout…', group: 'Layouts', icon: <Save size={14} />, action: () => setLayoutNamePrompt(true) },
     ]
+
+    // Only offered while drop-down mode is on — it restores the window to the
+    // bounds it had before the hotkey pulled it into the quake strip.
+    if (settings.quake?.enabled) {
+      baseActions.push({
+        id: 'quake-exit',
+        label: 'Exit Drop-down Mode (restore window)',
+        group: 'Application',
+        icon: <ChevronsUp size={14} />,
+        action: () => window.fterm?.quakeExit?.(),
+      })
+    }
+
+    const openWidget = (type: string, data?: Record<string, unknown>) => {
+      if (!activeTabId) return
+      setPendingWidget({ type, data, tabId: activeTabId })
+    }
+    const widgetActions: PaletteAction[] = [
+      { id: 'w-explorer', label: 'File Explorer', type: 'file-explorer', data: { path: tabs.find(t => t.id === activeTabId)?.currentCwd || '.' } },
+      { id: 'w-sys-mon', label: 'System Monitor', type: 'sys-mon' },
+      { id: 'w-docker', label: 'Docker Dashboard', type: 'docker' },
+      { id: 'w-weather', label: 'Weather', type: 'weather', data: { city: '' } },
+      { id: 'w-ping', label: 'Ping (8.8.8.8)', type: 'ping', data: { host: '8.8.8.8' } },
+      { id: 'w-portscan', label: 'Port Scan (localhost)', type: 'portscan', data: { host: 'localhost' } },
+      { id: 'w-snippets', label: 'Snippets Manager', type: 'snippets' },
+      { id: 'w-notes', label: 'Notes', type: 'notes-pad' },
+      { id: 'w-clipboard', label: 'Clipboard History', type: 'clipboard' },
+      { id: 'w-ftermfetch', label: 'Ftermfetch', type: 'ftermfetch' },
+      { id: 'w-browser', label: 'Browser', type: 'browser' },
+      { id: 'w-visualizer', label: 'Media Visualizer', type: 'visualizer' },
+    ].map((w: { id: string; label: string; type: string; data?: Record<string, unknown> }) => ({
+      id: w.id,
+      label: `Widget: ${w.label}`,
+      group: 'Widgets',
+      icon: <Command size={14} />,
+      action: () => openWidget(w.type, w.data),
+    }))
 
     const snippetActions: PaletteAction[] = snippets.map(sn => ({
       id: `snippet-${sn.id}`,
@@ -104,8 +157,8 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
       action: () => setTheme(t.id)
     }))
 
-    return [...baseActions, ...snippetActions, ...savedLayoutActions, ...deletedLayoutActions, ...tabActions, ...profileActions, ...sshHostActions, ...themeActions]
-  }, [addTab, addTabFn, closeTab, activeTabId, ai.sidebarOpen, setAIConfig, setSettings, setActiveView, onToggleSearch, tabs, setActiveTab, profiles, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, sshHosts, connectSshHost])
+    return [...baseActions, ...widgetActions, ...snippetActions, ...savedLayoutActions, ...deletedLayoutActions, ...tabActions, ...profileActions, ...sshHostActions, ...themeActions]
+  }, [addTab, addTabFn, closeTab, activeTabId, ai.sidebarOpen, setAIConfig, setSettings, setActiveView, onToggleSearch, tabs, setActiveTab, profiles, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, sshHosts, connectSshHost, setPendingWidget])
 
   const filtered = useMemo(() => {
     if (!query) return actions

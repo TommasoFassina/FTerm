@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { THEMES, useStore } from '@/store';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Check, Download } from 'lucide-react';
 import type { Theme } from '@/types';
+import { importThemes } from '@/utils/themeImport';
 
 function ViewContainer({ title, children }: { title: string, children: React.ReactNode }) {
     return (
@@ -131,6 +132,7 @@ export default function ThemesView() {
 
     const [editing, setEditing] = useState<Theme | null>(null);
     const [creating, setCreating] = useState(false);
+    const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const builtIn = THEMES.map(t => t.id);
     const customThemes = themes.filter(t => !builtIn.includes(t.id));
@@ -149,6 +151,38 @@ export default function ThemesView() {
     const handleDelete = (id: string) => {
         deleteTheme(id);
         if (editing?.id === id) setEditing(null);
+    };
+
+    /**
+     * Import iTerm2 / Windows Terminal schemes. Files are read in the renderer —
+     * no IPC and no filesystem access needed, since the picker hands us the
+     * content directly. A settings.json can carry dozens of schemes at once.
+     */
+    const handleImport = async (files: FileList | null) => {
+        if (!files?.length) return;
+        const imported: Theme[] = [];
+        const failures: string[] = [];
+
+        for (const file of Array.from(files)) {
+            let text: string;
+            try { text = await file.text(); } catch { failures.push(file.name); continue; }
+            const { themes: parsed, error } = importThemes(file.name, text);
+            if (error || !parsed.length) { failures.push(file.name); continue; }
+            parsed.forEach((t, i) => {
+                imported.push({ ...t, id: `custom-${Date.now()}-${imported.length + i}` });
+            });
+        }
+
+        imported.forEach(t => addTheme(t));
+        if (imported.length) {
+            setTheme(imported[imported.length - 1].id);   // preview the last one immediately
+            setImportMsg({
+                ok: true,
+                text: `Imported ${imported.length} theme${imported.length > 1 ? 's' : ''}${failures.length ? ` · skipped ${failures.join(', ')}` : ''}`,
+            });
+        } else {
+            setImportMsg({ ok: false, text: `Could not read ${failures.join(', ') || 'the selected file'}.` });
+        }
     };
 
     return (
@@ -179,15 +213,53 @@ export default function ThemesView() {
             {/* Custom Themes */}
             <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-2">
                 <h3 className="text-lg font-semibold">Custom Themes</h3>
-                {!creating && !editing && (
-                    <button
-                        onClick={() => setCreating(true)}
-                        className="flex items-center gap-1.5 px-3 py-1 text-sm bg-[#58a6ff]/10 border border-[#58a6ff]/30 text-[#58a6ff] rounded hover:bg-[#58a6ff]/20 transition-colors"
+                <div className="flex items-center gap-2">
+                    <input
+                        type="file"
+                        id="theme-import"
+                        className="hidden"
+                        accept=".itermcolors,.json"
+                        multiple
+                        onChange={e => { handleImport(e.target.files); e.target.value = ''; }}
+                    />
+                    <label
+                        htmlFor="theme-import"
+                        title="iTerm2 .itermcolors or Windows Terminal scheme JSON"
+                        className="flex items-center gap-1.5 px-3 py-1 text-sm bg-white/5 border border-white/10 text-white/70 rounded hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
                     >
-                        <Plus size={14} /> New Theme
-                    </button>
-                )}
+                        <Download size={14} /> Import…
+                    </label>
+                    {!creating && !editing && (
+                        <button
+                            onClick={() => setCreating(true)}
+                            className="flex items-center gap-1.5 px-3 py-1 text-sm bg-[#58a6ff]/10 border border-[#58a6ff]/30 text-[#58a6ff] rounded hover:bg-[#58a6ff]/20 transition-colors"
+                        >
+                            <Plus size={14} /> New Theme
+                        </button>
+                    )}
+                </div>
             </div>
+
+            <p className="text-xs text-white/35 -mt-2 mb-4">
+                Import reads iTerm2 <code className="text-white/50">.itermcolors</code> files and Windows Terminal
+                color schemes — a single scheme, an array, or a whole <code className="text-white/50">settings.json</code>
+                {' '}(every scheme inside it is imported).
+            </p>
+
+            {importMsg && (
+                <div
+                    className={`mb-4 flex items-start justify-between gap-3 rounded border px-3 py-2 text-xs ${
+                        importMsg.ok
+                            ? 'border-[#3fb950]/40 bg-[#3fb950]/10 text-[#7ee787]'
+                            : 'border-[#f85149]/40 bg-[#f85149]/10 text-[#ff7b72]'
+                    }`}
+                >
+                    <span>{importMsg.text}</span>
+                    <button onClick={() => setImportMsg(null)} className="opacity-60 hover:opacity-100 shrink-0">
+                        <X size={12} />
+                    </button>
+                </div>
+            )}
 
             <AnimatePresence>
                 {creating && (

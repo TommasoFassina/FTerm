@@ -6,6 +6,7 @@ import type { PetState } from '@/types'
 // ── Sprites per pet type ────────────────────────────────────────────────────────────
 
 import { SPRITES, STATE_COLORS, pickDialogue } from './PetData'
+import { getCosmetic } from '@/utils/petAchievements'
 
 export default function Pet() {
   const pet = useStore(s => s.pet)
@@ -226,6 +227,7 @@ export default function Pet() {
 
   const sprite = (sprites[petState] || sprites['idle'])[frameIdx] || sprites['idle'][0]
   const color = STATE_COLORS[petState] || STATE_COLORS['idle']
+  const cosmetic = getCosmetic(pet.equippedCosmetic)
 
   const handlePetting = () => {
     lastInteractionRef.current = Date.now()
@@ -279,8 +281,15 @@ export default function Pet() {
       {/* Pet name */}
       <div className="text-[10px] text-[#484f58] text-right mr-0.5" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.9))' }}>{pet.name}</div>
 
-      {/* Beat pulse wrapper — animated via beatControls on each beat */}
-      <motion.div animate={beatControls} initial={{ scale: 1, y: 0 }} style={{ transformOrigin: 'bottom center' }}>
+      {/* Beat pulse wrapper — animated via beatControls on each beat.
+          When something is equipped the sprite is pushed down by one line so the
+          cosmetic, which hangs above it, doesn't collide with the name label. */}
+      <motion.div
+        animate={beatControls}
+        initial={{ scale: 1, y: 0 }}
+        className={cosmetic ? 'mt-3.5' : undefined}
+        style={{ transformOrigin: 'bottom center' }}
+      >
       {/* Pet sprite */}
       <motion.div
         animate={
@@ -311,11 +320,35 @@ export default function Pet() {
                 ? { repeat: Infinity, duration: 2 }
               : { duration: 0.25 }
         }
-        className={`font-mono text-[11px] leading-tight whitespace-pre ${color} cursor-pointer pointer-events-auto`}
+        className={`relative font-mono text-[11px] leading-tight whitespace-pre ${color} cursor-pointer pointer-events-auto`}
         style={{ filter: 'drop-shadow(0 0 6px rgba(0,0,0,0.9)) drop-shadow(0 1px 3px rgba(0,0,0,0.8))' }}
         title={`${pet.name} — Click to pet!`}
         onClick={handlePetting}
       >
+        {/* Equipped cosmetic — absolutely positioned so it is centred on the
+            sprite's own width (which differs per species) and sits exactly one
+            line above it. Being a child of the sprite element, it inherits the
+            state colour and moves with every hop, shake and pulse.
+            The outer span owns the centring transform; the inner one owns the
+            animation, so motion never overwrites `translateX(-50%)`. */}
+        {cosmetic && (
+          <span
+            className="absolute left-1/2 bottom-full block leading-tight pointer-events-none"
+            style={{ transform: 'translateX(-50%)' }}
+            title={cosmetic.name}
+          >
+            <motion.span
+              key={cosmetic.id}
+              initial={{ opacity: 0, y: 3, scale: 0.7 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+              className="block whitespace-pre"
+              style={{ transformOrigin: 'bottom center' }}
+            >
+              {cosmetic.glyph}
+            </motion.span>
+          </span>
+        )}
         {sprite}
       </motion.div>
       </motion.div>

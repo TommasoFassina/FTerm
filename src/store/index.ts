@@ -34,6 +34,10 @@ import type {
   ClaudeCodeStats,
   ClaudeCodeUsage,
 } from '@/types'
+import {
+  deriveMetrics, evaluateAchievements, totalReward,
+  purchaseRefusal, getCosmetic, COIN_EVENTS,
+} from '@/utils/petAchievements'
 
 // ─── Built-in themes ──────────────────────────────────────────────────────────
 
@@ -205,6 +209,14 @@ interface FTermState {
   setLastActivity: (activity: string) => void
   setPetConfig: (config: Partial<PetConfig>) => void
   addPetXp: (amount: number) => void
+  /** Pay out any achievement whose condition now holds. Safe to call often. */
+  checkPetAchievements: () => void
+  awardPetCoins: (amount: number) => void
+  /** Buy a cosmetic; returns false (and changes nothing) if it is not affordable/unlocked. */
+  buyCosmetic: (id: string) => boolean
+  equipCosmetic: (id: string | null) => void
+  /** React to a real git event — coins, mood and a line of dialogue. */
+  petGitEvent: (event: 'commit' | 'push' | 'conflict' | 'clean') => void
   /** Per-type XP/level progress stored separately so switching type preserves each pet's progress */
   petProgress: Partial<Record<string, { level: number; xp: number; maxXp: number; name: string }>>
 
@@ -973,7 +985,11 @@ export const useStore = create<FTermState>()(
         level: 1,
         xp: 0,
         maxXp: 100,
-        stats: { commitsMade: 0, commandsRun: 0, daysActive: 1, linesWritten: 0 }
+        stats: { commitsMade: 0, commandsRun: 0, daysActive: 1, linesWritten: 0 },
+        coins: 0,
+        achievements: [],
+        ownedCosmetics: [],
+        equippedCosmetic: null,
       },
       petProgress: {},
       petState: 'idle',
@@ -1005,15 +1021,90 @@ export const useStore = create<FTermState>()(
       }),
       addPetXp: (amount) => set(s => {
         const { newXp, newLevel, newMaxXp } = applyXp(s.pet.xp, s.pet.level, s.pet.maxXp, amount)
-        if (newLevel > s.pet.level) {
+        const levels = newLevel - s.pet.level
+        if (levels > 0) {
           setTimeout(() => {
             useStore.getState().setPetState('celebrating')
-            useStore.getState().setPetMessage(`Level ${newLevel}!`)
+            useStore.getState().setPetMessage(`Level ${newLevel}! +${COIN_EVENTS.levelUp * levels} coins`)
             setTimeout(() => useStore.getState().setPetState('idle'), 5000)
           }, 0)
         }
-        return { pet: { ...s.pet, xp: newXp, level: newLevel, maxXp: newMaxXp } }
+        return {
+          pet: {
+            ...s.pet,
+            xp: newXp, level: newLevel, maxXp: newMaxXp,
+            coins: (s.pet.coins ?? 0) + (levels > 0 ? COIN_EVENTS.levelUp * levels : 0),
+          },
+        }
       }),
+
+      // Pet — achievements, coins and cosmetics
+      checkPetAchievements: () => {
+        const s = get()
+        const metrics = deriveMetrics(s.pet, s.terminalStats)
+        const earned = evaluateAchievements(metrics, s.pet.achievements ?? [])
+        if (!earned.length) return
+
+        const reward = totalReward(earned)
+        set(st => ({
+          pet: {
+            ...st.pet,
+            coins: (st.pet.coins ?? 0) + reward,
+            achievements: [...(st.pet.achievements ?? []), ...earned.map(a => a.id)],
+          },
+        }))
+        // Announce one badge at a time — a burst of bubbles reads as noise.
+        const first = earned[0]
+        const extra = earned.length > 1 ? ` (+${earned.length - 1} more)` : ''
+        get().setPetState('celebrating')
+        get().setPetMessage(`${first.name} unlocked! +${reward} coins${extra}`)
+        setTimeout(() => {
+          if (useStore.getState().petState === 'celebrating') useStore.getState().setPetState('idle')
+          useStore.getState().setPetMessage(null)
+        }, 5000)
+      },
+      awardPetCoins: (amount) => set(s => ({
+        pet: { ...s.pet, coins: Math.max(0, (s.pet.coins ?? 0) + amount) },
+      })),
+      buyCosmetic: (id) => {
+        const s = get()
+        const owned = s.pet.ownedCosmetics ?? []
+        if (purchaseRefusal(id, s.pet.coins ?? 0, owned, s.pet.achievements ?? [])) return false
+        const price = getCosmetic(id)!.price
+        set(st => ({
+          pet: {
+            ...st.pet,
+            coins: (st.pet.coins ?? 0) - price,
+            ownedCosmetics: [...(st.pet.ownedCosmetics ?? []), id],
+            equippedCosmetic: id,   // wearing what you just bought is the expected outcome
+          },
+        }))
+        return true
+      },
+      equipCosmetic: (id) => set(s => {
+        // Only something already owned can be worn.
+        if (id !== null && !(s.pet.ownedCosmetics ?? []).includes(id)) return s
+        return { pet: { ...s.pet, equippedCosmetic: id } }
+      }),
+      petGitEvent: (event) => {
+        const REACTIONS: Record<string, { coins: number; state: PetState; message: string; hold: number }> = {
+          commit: { coins: COIN_EVENTS.commit, state: 'celebrating', message: `Commit! +${COIN_EVENTS.commit} coins`, hold: 4000 },
+          push: { coins: COIN_EVENTS.push, state: 'happy', message: `Pushed! +${COIN_EVENTS.push} coins`, hold: 3500 },
+          conflict: { coins: 0, state: 'worried', message: 'Merge conflict — I believe in you.', hold: 5000 },
+          clean: { coins: 0, state: 'happy', message: 'Working tree clean.', hold: 2500 },
+        }
+        const r = REACTIONS[event]
+        if (!r) return
+        if (r.coins) get().awardPetCoins(r.coins)
+        get().setPetState(r.state)
+        get().setPetMessage(r.message)
+        setTimeout(() => {
+          const st = useStore.getState()
+          if (st.petState === r.state) st.setPetState('idle')
+          st.setPetMessage(null)
+        }, r.hold)
+        get().checkPetAchievements()
+      },
 
       // AI
       ai: {
@@ -1041,7 +1132,8 @@ export const useStore = create<FTermState>()(
       // Chat
       chatMessages: [],
       commandHistory: [],
-      addCommandHistory: (command) => set(s => {
+      addCommandHistory: (command) => {
+        set(s => {
         const { newXp, newLevel, newMaxXp } = applyXp(s.pet.xp, s.pet.level, s.pet.maxXp, 15)
         const petStats = { ...s.pet.stats, commandsRun: (s.pet.stats?.commandsRun || 0) + 1 }
         const history = [...s.commandHistory, command].slice(-1000)
@@ -1076,7 +1168,10 @@ export const useStore = create<FTermState>()(
             lastSessionDate: today,
           },
         }
-      }),
+        })
+        // Achievements read the counters this call just bumped.
+        get().checkPetAchievements()
+      },
       addChatMessage: (msg, explicitId?) => {
         const id = explicitId ?? newMsgId()
         set(s => ({
@@ -1146,7 +1241,10 @@ export const useStore = create<FTermState>()(
             window.fterm.git.log(currentRepo, 50),
             window.fterm.git.stats(currentRepo),
           ])
+          const hadConflicts = get().git.status?.hasConflicts ?? false
           set(s => ({ git: { ...s.git, loading: false, status, branches, commits, stats } }))
+          // Only on the transition, so the pet doesn't sulk on every refresh.
+          if (status?.hasConflicts && !hadConflicts) get().petGitEvent('conflict')
         } catch (e: any) {
           set(s => ({ git: { ...s.git, loading: false, error: e.message } }))
         }
@@ -1174,6 +1272,7 @@ export const useStore = create<FTermState>()(
               stats: { ...s.pet.stats, commitsMade: (s.pet.stats?.commitsMade || 0) + 1 }
             }
           }))
+          get().petGitEvent('commit')   // coins + celebration, then achievement sweep
         } catch (e: any) {
           set(s => ({ git: { ...s.git, error: e.message } }))
         }
@@ -1186,6 +1285,7 @@ export const useStore = create<FTermState>()(
           await window.fterm.git.push(currentRepo, remote, branch)
           await get().refreshGitStatus()
           set(s => ({ git: { ...s.git, loading: false } }))
+          get().petGitEvent('push')
         } catch (e: any) {
           set(s => ({ git: { ...s.git, loading: false, error: e.message } }))
         }

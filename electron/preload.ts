@@ -165,6 +165,19 @@ contextBridge.exposeInMainWorld('fterm', {
   setWindowPosition: (x: number, y: number) => ipcRenderer.send('window:set-position', x, y),
   getWindowPosition: (): Promise<[number, number]> => ipcRenderer.invoke('window:get-position'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  // Quake / drop-down mode
+  quakeConfigure: (cfg: any): Promise<{ registered: boolean; error?: string; active: boolean }> =>
+    ipcRenderer.invoke('quake:configure', cfg),
+  quakeStatus: (): Promise<{ registered: boolean; error?: string; active: boolean }> =>
+    ipcRenderer.invoke('quake:status'),
+  quakeToggle: () => ipcRenderer.send('quake:toggle'),
+  quakeHide: () => ipcRenderer.send('quake:hide'),
+  quakeExit: () => ipcRenderer.send('quake:exit'),
+  onQuakeState: (cb: (s: { registered: boolean; error?: string; active: boolean; visible: boolean }) => void) => {
+    const fn = (_: Electron.IpcRendererEvent, s: any) => cb(s)
+    ipcRenderer.on('quake:state', fn)
+    return () => ipcRenderer.removeListener('quake:state', fn)
+  },
   openExternal: (url: string) => ipcRenderer.send('window:open-external', url),
 openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
   onHistorySearch: (cb: () => void) => {

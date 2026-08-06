@@ -100,7 +100,7 @@ function stripNonSGR(line: string): string {
     .replace(/\x1bP[^\x1b]*(?:\x1b\\)/g, '')
     // ESC + single non-[ char (ESC= ESC> ESC7 ESC8 ESC( charset designators, etc.)
     // Must run BEFORE the CSI pass so we don't accidentally eat \x1b[ prefixes.
-    .replace(/\x1b[^\[]/g, '')
+    .replace(/\x1b[^[]/g, '')
     // CSI sequences: ESC [ params letter — keep ONLY plain SGR (no private/intermediate prefix, letter = 'm')
     .replace(/\x1b\[([?!>]?[0-9;:]*)([A-Za-z@`])/g, (_match, p, cmd) =>
       (cmd === 'm' && !/^[?!>]/.test(p)) ? _match : '')

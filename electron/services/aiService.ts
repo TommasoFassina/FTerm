@@ -8,7 +8,7 @@
  *   ai:done    (requestId)
  *   ai:error   (requestId, message)
  */
-import { ipcMain, IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, IpcMainInvokeEvent } from 'electron'
 
 const MAX_AI_BUFFER = 50 * 1024 * 1024 // 50MB
 
@@ -185,7 +185,7 @@ async function streamCopilot(sender: Sender, req: AIRequest, signal?: AbortSigna
     apiKey: copilotToken,
     baseURL: 'https://api.githubcopilot.com',
     defaultHeaders: {
-      'Editor-Version': 'FTerm/0.1.0',
+      'Editor-Version': `FTerm/${app.getVersion()}`,
       'Copilot-Integration-Id': 'vscode-chat',
     },
   })
@@ -237,7 +237,7 @@ async function streamOllama(sender: Sender, req: AIRequest, signal?: AbortSignal
           resolvedModel = json.models[0].name
         }
       }
-    } catch (_) { } // silently fail and try default `llama3`
+    } catch { } // silently fail and try default `llama3`
   }
 
   let res: Response
@@ -257,7 +257,7 @@ async function streamOllama(sender: Sender, req: AIRequest, signal?: AbortSignal
     try {
       const json = await res.json()
       if (json.error) errBody = json.error
-    } catch (_) { }
+    } catch { }
     throw new Error(`Ollama error: ${errBody}`)
   }
   if (!res.body) throw new Error('No response body from Ollama')

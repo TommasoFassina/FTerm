@@ -22,6 +22,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      # electron/vendor/ubol is git-ignored (GPL, not redistributed in-repo) but
+      # electron-builder packages it as an extraResource — a clean checkout has
+      # to fetch it or the build ships a browser with no ad blocking.
+      - name: Fetch uBlock Origin Lite
+        run: npm run fetch:ubol
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build (Windows)
         run: npm run electron:build
         env:
@@ -32,7 +40,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fterm-windows
-          path: release/*.exe
+          # Installer + portable only. `publish: null` in package.json stops
+          # electron-builder from uploading to the release itself — this action
+          # is the single publisher, which is what keeps the asset list clean.
+          path: |
+            release/*.exe
+            !release/*.blockmap
           retention-days: 5
 
   build-mac:
@@ -48,6 +61,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      # electron/vendor/ubol is git-ignored (GPL, not redistributed in-repo) but
+      # electron-builder packages it as an extraResource — a clean checkout has
+      # to fetch it or the build ships a browser with no ad blocking.
+      - name: Fetch uBlock Origin Lite
+        run: npm run fetch:ubol
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build (macOS)
         run: npm run electron:build
         env:
@@ -58,7 +79,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fterm-mac
-          path: release/*.dmg
+          path: |
+            release/*.dmg
+            !release/*.blockmap
           retention-days: 5
 
   build-linux:
@@ -79,6 +102,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      # electron/vendor/ubol is git-ignored (GPL, not redistributed in-repo) but
+      # electron-builder packages it as an extraResource — a clean checkout has
+      # to fetch it or the build ships a browser with no ad blocking.
+      - name: Fetch uBlock Origin Lite
+        run: npm run fetch:ubol
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (Linux)
         run: npm run electron:build
