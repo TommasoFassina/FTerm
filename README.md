@@ -47,10 +47,34 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 ## Screenshots
 
 <p align="center">
+
   <img src="docs/Img/s1.png" alt="Terminal with AI sidebar" width="350"/>
   <img src="docs/Img/s10.png" alt="Widgets and file explorer" width="350"/>
-  <img src="docs/Img/s3.png" alt="Git panel and themes" width="350"/>
-  <img src="docs/Img/s5.png" alt="Settings and AI providers" width="350"/>
+  <img src="docs/Img/s3.png" alt="Git panel" width="350"/>
+  <img src="docs/Img/s17.png" alt="FTermfetch and AI sidebar view" width="350"/>
+
+</p>
+
+> Built in browser
+
+<p align="center">
+  <img src="docs/Img/s20.png" alt="Built in browser" width="350"/>
+  <img src="docs/Img/s21.png" alt="YouTube sample view" width="350"/>
+</p>
+
+> Widget: viz (music player and visualizer)
+
+<p align="center">
+  <img src="docs/Gif/gif6.gif" alt="FTerm viz demo" width="700"/>
+</p>
+
+<p align="center">
+  <img src="docs/Img/s13.png" alt="viz radial style" width="350"/>
+  <img src="docs/Img/s15.png" alt="viz 3d waterfall style" width="350"/>
+
+  <img src="docs/Img/s14v2.png" alt="viz 3d waterfall style" width="175"/>
+  <img src="docs/Img/s16v2.png" alt="viz 3d waterfall style" width="175"/>
+
 </p>
 
 ---
@@ -369,6 +393,9 @@ Planned features and ideas — contributions welcome.
 - ✅ **GitHub-style workday heatmap** — 53-week × 7-day contribution grid in the Stats panel; hover for daily command/error counts
 - ✅ **Session streaks** — current streak and longest streak badges in the Stats panel
 - ✅ **Accurate session stats** — error rate, most-used commands bar chart, busiest hours histogram
+
+> not planned as of now
+
 - **Fitbit / health sync** — correlate coding activity with sleep, steps, and heart rate from Fitbit or Apple Health; show "deep work" scores alongside health data
 - **Per-command timing** — average duration, slowest commands, p95 latency
 
@@ -378,12 +405,12 @@ Planned features and ideas — contributions welcome.
 - ✅ **Cross-platform shell function** — bash, zsh, and fish init scripts (in addition to PowerShell and CMD)
 - ✅ **Export as PNG** — save the `ftermfetch` card directly from the widget
 
-### AI & Workflow
+### AI & Workflow (not planned as of now)
 - **AI context memory** — let the AI sidebar remember project-specific facts across sessions (stored locally, never sent unless relevant)
 - **Inline diff view** — when AI suggests a code fix, show a side-by-side diff before applying it to a file in the Monaco editor
 - **Voice input** — push-to-talk to dictate commands or chat messages
 
-### Distribution
+### Distribution (not planned as of now)
 - **In-app updates** — check the installed version against the latest GitHub release and update in place, instead of downloading the installer by hand
 - **Code signing** — remove the SmartScreen warning on Windows installs
 
