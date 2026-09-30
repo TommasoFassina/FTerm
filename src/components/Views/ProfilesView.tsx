@@ -28,6 +28,7 @@ const ACCENT_COLORS = [
   { id: 'cyan',   bg: 'rgba(57,197,207,0.15)',  border: 'rgba(57,197,207,0.3)',  text: '#39c5cf',  dot: '#39c5cf' },
 ]
 
+/** 'auto' (or nothing) leaves tabs on the rotating palette; the card shows blue. */
 function getAccent(colorId?: string) {
   return ACCENT_COLORS.find(c => c.id === colorId) ?? ACCENT_COLORS[0]
 }
@@ -39,9 +40,11 @@ interface FormState {
   cwd: string
   icon: IconKey
   color: string
+  /** '' = follow the app theme */
+  themeId: string
 }
 
-const EMPTY_FORM: FormState = { name: '', shell: '', args: '', cwd: '', icon: 'TerminalSquare', color: 'blue' }
+const EMPTY_FORM: FormState = { name: '', shell: '', args: '', cwd: '', icon: 'TerminalSquare', color: 'auto', themeId: '' }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -59,7 +62,7 @@ const inputCls = "w-full bg-white/[0.04] border border-white/[0.08] hover:border
 const monoInputCls = inputCls + " font-mono"
 
 export default function ProfilesView() {
-  const { profiles, addTab, addProfile, updateProfile, deleteProfile, availableShells } = useStore()
+  const { profiles, addTab, addProfile, updateProfile, deleteProfile, availableShells, themes } = useStore()
   const [editing, setEditing] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
@@ -83,7 +86,8 @@ export default function ProfilesView() {
       args: profile.args?.join(' ') ?? '',
       cwd: profile.cwd ?? '',
       icon: (profile.icon as IconKey) ?? 'TerminalSquare',
-      color: (profile as any).color ?? 'blue',
+      color: profile.color ?? 'auto',
+      themeId: profile.themeId ?? '',
     })
     setEditing(profile.id)
     setCreating(false)
@@ -94,7 +98,10 @@ export default function ProfilesView() {
 
   const save = () => {
     const args = form.args.trim() ? form.args.trim().split(/\s+/) : undefined
-    const data = { name: form.name, shell: form.shell, args, cwd: form.cwd, icon: form.icon, color: form.color }
+    const data = {
+      name: form.name, shell: form.shell, args, cwd: form.cwd, icon: form.icon, color: form.color,
+      themeId: form.themeId || undefined,
+    }
     if (creating) {
       if (!form.name.trim()) return
       addProfile(data)
@@ -144,7 +151,8 @@ export default function ProfilesView() {
       {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto custom-scrollbar pb-4">
         {profiles.map((profile, i) => {
-          const accent = getAccent((profile as any).color)
+          const accent = getAccent(profile.color)
+          const pinnedTheme = profile.themeId ? themes.find(t => t.id === profile.themeId) : undefined
           const icon = iconMap[(profile.icon as IconKey)] ?? iconMap.TerminalSquare
           return (
             <motion.div
@@ -178,6 +186,12 @@ export default function ProfilesView() {
                   <p className="text-[11px] font-mono text-white/35 truncate">
                     {profile.shell || 'Default shell'}{profile.args?.length ? ' ' + profile.args.join(' ') : ''}
                   </p>
+                  {pinnedTheme && (
+                    <p className="text-[11px] truncate flex items-center gap-1 text-white/35">
+                      <span className="w-2 h-2 rounded-full shrink-0 border border-white/20" style={{ background: pinnedTheme.background }} />
+                      {pinnedTheme.name}
+                    </p>
+                  )}
                   {profile.cwd && (
                     <p className="text-[11px] font-mono truncate flex items-center gap-1" style={{ color: accent.text + 'aa' }}>
                       <Folder size={9} className="shrink-0" />{profile.cwd}
@@ -275,8 +289,20 @@ export default function ProfilesView() {
                 </Field>
 
                 {/* Color picker */}
-                <Field label="Color">
-                  <div className="flex gap-2">
+                <Field label="Color" hint="tabs launched from this profile">
+                  <div className="flex gap-2 items-center">
+                    <button
+                      onClick={() => setForm(f => ({ ...f, color: 'auto' }))}
+                      className="h-7 px-2 rounded-full border-2 text-[10px] text-white/70 transition-all"
+                      style={{
+                        background: 'conic-gradient(#58a6ff, #3fb950, #d29922, #ff7b72, #bc8cff, #58a6ff)',
+                        borderColor: form.color === 'auto' ? 'white' : 'transparent',
+                        opacity: form.color === 'auto' ? 1 : 0.5,
+                      }}
+                      title="Rotate through the tab palette"
+                    >
+                      <span className="px-1 rounded bg-black/60">Auto</span>
+                    </button>
                     {ACCENT_COLORS.map(c => (
                       <button
                         key={c.id}
@@ -290,6 +316,18 @@ export default function ProfilesView() {
                       />
                     ))}
                   </div>
+                </Field>
+
+                {/* Theme */}
+                <Field label="Theme" hint="e.g. a red one for production shells">
+                  <select
+                    className={inputCls}
+                    value={form.themeId}
+                    onChange={e => setForm(f => ({ ...f, themeId: e.target.value }))}
+                  >
+                    <option value="">Follow the app theme</option>
+                    {themes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
                 </Field>
 
                 {/* Shell */}

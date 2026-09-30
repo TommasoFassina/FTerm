@@ -165,6 +165,7 @@ contextBridge.exposeInMainWorld('fterm', {
   setWindowPosition: (x: number, y: number) => ipcRenderer.send('window:set-position', x, y),
   getWindowPosition: (): Promise<[number, number]> => ipcRenderer.invoke('window:get-position'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  focusWindow: () => ipcRenderer.send('window:focus'),
   // Quake / drop-down mode
   quakeConfigure: (cfg: any): Promise<{ registered: boolean; error?: string; active: boolean }> =>
     ipcRenderer.invoke('quake:configure', cfg),
@@ -214,6 +215,9 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
     ipcRenderer.invoke('fs:readFile', filePath),
   fsReadImage: (filePath: string): Promise<{ mime: string; base64: string; size: number }> =>
     ipcRenderer.invoke('fs:readImage', filePath),
+  fsStat: (filePath: string) => ipcRenderer.invoke('fs:stat', filePath),
+  fsWriteFileBase64: (filePath: string, base64: string): Promise<boolean> =>
+    ipcRenderer.invoke('fs:writeFileBase64', filePath, base64),
   fsWriteFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   fsReadDir: (dirPath: string): Promise<{ entries: Array<{ name: string; isDir: boolean; size: number }>; error?: string }> =>
@@ -253,8 +257,23 @@ openPath: (filePath: string) => ipcRenderer.send('shell:open-path', filePath),
   },
 
   // ── Recording ──────────────────────────────────────────────────────────────
-  recordingStop: (data: { snapshots: any[]; events: any[]; theme: any; backgroundImage?: string; backgroundBlur?: number; backgroundOpacity?: number; generateSubtitlesWith?: string }): Promise<{ videoPath: string }> =>
-    ipcRenderer.invoke('recording:stop', data),
+  recordingExport: (data: Record<string, unknown>): Promise<{ videoPath?: string; cancelled?: boolean }> =>
+    ipcRenderer.invoke('recording:export', data),
+  recordingCancel: (): void => ipcRenderer.send('recording:cancel'),
+  recordingExportCast: (data: { cast: string; fileName?: string }): Promise<{ videoPath: string }> =>
+    ipcRenderer.invoke('recording:exportCast', data),
+
+  // ── Command history ────────────────────────────────────────────────────────
+  historyAppend: (entry: unknown): void => ipcRenderer.send('history:append', entry),
+  historySetEnabled: (on: boolean): void => ipcRenderer.send('history:setEnabled', on),
+  historySearch: (query: string, limit?: number, includeOutput?: boolean): Promise<any[]> =>
+    ipcRenderer.invoke('history:search', query, limit, includeOutput),
+  historyGet: (id: string): Promise<any> => ipcRenderer.invoke('history:get', id),
+  historyStats: (): Promise<any> => ipcRenderer.invoke('history:stats'),
+  historyClear: (): Promise<boolean> => ipcRenderer.invoke('history:clear'),
+  checkForUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  historyRemoveMatching: (query: string): Promise<number> =>
+    ipcRenderer.invoke('history:removeMatching', query),
   captureRect: (rect: { x: number; y: number; width: number; height: number }): Promise<string> =>
     ipcRenderer.invoke('window:captureRect', rect),
   onRecordingProgress: (cb: (percent: number) => void) => {

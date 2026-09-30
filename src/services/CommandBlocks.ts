@@ -15,6 +15,8 @@
  * churn, and must never be persisted to localStorage.
  */
 import type { Terminal, IMarker, IDecoration } from '@xterm/xterm'
+import { useStore } from '@/store'
+import { shouldRecord, toEntry } from '@/utils/commandHistory'
 
 export interface CommandBlock {
   id: string
@@ -48,6 +50,7 @@ const RAIL_WIDTH_PX = 3
 const RAIL_OFFSET_PX = 6
 
 type Listener = () => void
+type FinishListener = (block: CommandBlock) => void
 
 export class CommandBlockTracker {
   private blocks: CommandBlock[] = []
@@ -55,16 +58,48 @@ export class CommandBlockTracker {
   private decorations = new Map<string, IDecoration>()
   private pending: CommandBlock | null = null
   private listeners = new Set<Listener>()
+  private finishListeners = new Set<FinishListener>()
   private seq = 0
   private lastExitCode: number | null = null
+
+  /** Commands exactly as typed, so the leading-space "do not log" convention
+   *  survives the trim `onCommandStart` performs. Cleared with the block. */
+  private rawCommands = new Map<string, string>()
 
   constructor(private term: Terminal, private paneId: string) { }
 
   // ─── Subscription ──────────────────────────────────────────────────────────
 
+  /**
+   * Writes a finished block to the persistent history.
+   *
+   * Everything about *whether* and *what* is decided by the pure rules in
+   * `utils/commandHistory` — this only decides *when*, which is the moment a
+   * block closes and its exit code is known.
+   */
+  private record(block: CommandBlock): void {
+    try {
+      const { commandHistoryEnabled, commandHistoryOutput } = useStore.getState().settings
+      if (commandHistoryEnabled === false) return
+      if (!shouldRecord(block.command, this.rawCommands.get(block.id) ?? block.command)) return
+      const output = commandHistoryOutput ? this.getOutput(block.id) : undefined
+      window.fterm.historyAppend(toEntry(block, output))
+    } catch { /* history must never break the terminal */ }
+  }
+
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn)
     return () => { this.listeners.delete(fn) }
+  }
+
+  /**
+   * Called once per command that ran to completion, with its exit code and
+   * duration settled. Empty prompt redraws (resize, Ctrl+C on an empty line)
+   * never reach it.
+   */
+  onBlockFinished(fn: FinishListener): () => void {
+    this.finishListeners.add(fn)
+    return () => { this.finishListeners.delete(fn) }
   }
 
   private emit(): void {
@@ -105,6 +140,11 @@ export class CommandBlockTracker {
       open.exitCode = this.lastExitCode
       open.durationMs = open.startedAt ? Date.now() - open.startedAt : null
       this.recolor(open.id, open.exitCode ? FAILED_COLOR : OK_COLOR)
+      this.record(open)
+      this.rawCommands.delete(open.id)
+      for (const fn of this.finishListeners) {
+        try { fn({ ...open }) } catch { /* a listener must never break the terminal */ }
+      }
     }
     this.lastExitCode = null
 
@@ -158,6 +198,7 @@ export class CommandBlockTracker {
       this.decorate(block.id, marker, RUNNING_COLOR)
     }
 
+    this.rawCommands.set(block.id, command)
     this.blocks.push(block)
     this.trim()
     this.emit()
@@ -215,6 +256,7 @@ export class CommandBlockTracker {
   dispose(): void {
     this.reset()
     this.listeners.clear()
+    this.finishListeners.clear()
   }
 
   private trim(): void {

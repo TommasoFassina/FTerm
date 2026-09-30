@@ -1,14 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useStore } from '@/store'
+import { languageForPath } from '@/utils/editorLang'
 
-const EXT_TO_LANG: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  py: 'python', go: 'go', rs: 'rust', java: 'java', c: 'c', cpp: 'cpp',
-  cs: 'csharp', rb: 'ruby', php: 'php', md: 'markdown', json: 'json',
-  yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml', csv: 'plaintext',
-  sh: 'shell', bash: 'shell', zsh: 'shell', fish: 'shell', ps1: 'powershell',
-  txt: 'plaintext', log: 'plaintext', conf: 'ini', ini: 'ini',
-}
 import { motion, AnimatePresence } from 'motion/react'
 import {
   Folder, File, FileText, Image, Code, X, ChevronRight, ChevronLeft,
@@ -192,8 +185,8 @@ export default function FileExplorerWidget({ path: initialPath, onClose, onNavig
       try {
         const content = await window.fterm.fsReadFile(fp)
         if (content === null) return
-        const lang = EXT_TO_LANG[ext] ?? 'plaintext'
-        addEditorTab(content, lang, fp)
+        // one table for language detection, shared with the editor itself
+        addEditorTab(content, languageForPath(fp), fp)
         onClose()
       } catch {
         window.fterm.openPath(fp)

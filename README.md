@@ -88,9 +88,11 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **Split panes** — horizontal and vertical splits per tab, navigate with `Ctrl+Alt+Arrow`
 - **Multiple tabs** — open, close, and switch terminal tabs
 - **Remote terminal** — connect to remote shells over WebSocket; full mobile control surface with Term / AI / Tools tabs, sticky modifier key bar, quick-launcher chips, and widget parity (file explorer, system monitor, docker, weather, ping, port scanner, clipboard)
-- **History search** — `Ctrl+R` fuzzy search through command history
+- **Persistent command history** — every finished command is kept with its exit code, duration and working directory, across sessions. `Ctrl+Shift+H` searches it with real filters (`npm cwd:fterm exit:fail since:7d`); Enter puts a command back on the prompt without running it. Passwords, tokens and keys are stripped before anything is written, a command typed with a leading space is never recorded, and output capture is a separate switch that is off by default
+- **History search** — `Ctrl+R` fuzzy search through the shell's own history
 - **Command palette** — `Ctrl+Shift+P` for quick access to any action
-- **Shell profiles** — save named profiles (shell, working directory, env vars, theme)
+- **Frequent directories** — every `cd` is remembered and ranked zoxide-style (how often × how recently); type `z` and a few letters in the command palette to jump there. A busy pane gets a new tab in that directory instead of keystrokes typed into a running program
+- **Shell profiles** — save named profiles (shell, working directory, env vars, tab colour, theme). A profile can pin its own theme — a red one for production shells — while every other pane follows the app theme
 - **Keybinding customization** — remap any shortcut in settings
 - **Shell auto-restart** — shell respawns automatically in the same CWD when it exits (configurable in General → Terminal)
 - **SSH host manager** — save SSH connections in Settings → Remote and one-click connect from the command palette; key/agent auth only, no passwords stored
@@ -111,14 +113,26 @@ A modern, AI-powered terminal emulator with a built-in Tamagotchi companion.
 - **Plugin system** — extend FTerm with custom JavaScript plugins, hot-reloaded on save
 
 ### Recording
-- **Session recording** — record your terminal session and export as an `.mp4` video
-- Background rendering via ffmpeg — progress shown in the UI while encoding
+- **Session recording** — record any pane, with pause and resume
+- **Recording studio** — stopping opens an editor rather than starting an encode: scrub the take, trim it, cut spans out of the middle, set speed, size, frame rate and quality, then export. Undo/redo over every edit. The preview is painted by the same code as the exporter, so what you scrub through is the file you get
+- **Automatic camera** — finds whatever is changing on screen and pushes in on it, holding each framing long enough to read and easing between them; switchable, with live preview
+- **Three formats** — `.mp4`, an animated GIF (one palette for the whole clip, so the theme survives), or an asciicast `.cast`: the text itself rather than a picture of it, kilobytes instead of megabytes and selectable in a player
+- **Copy a command block as an image** — a PNG of the command, its output, the working directory and the exit code and duration, in your theme; clipboard or file
+
+### Editor
+- **Monaco editor tabs** — open a file from the explorer or the toolbar, edit and run it from the same tab
+- **Painted in your terminal theme** — the editor follows the active palette instead of being pinned to VS Code grey; light schemes included
+- **Unsaved-change tracking** — a dot in the tab bar and a confirmation before a dirty tab closes
+- **Watches the file on disk** — if something changes it underneath you, a banner offers Reload, Overwrite or Dismiss
+- **Recent files**, Save As (`Ctrl+Shift+S`), reload, format, find, minimap and word-wrap toggles, and a searchable language picker that matches on extension
+- **Run it** — a saved file runs from where it lives, so relative imports behave; JavaScript, TypeScript, Python, Go, Rust, Ruby, PHP, Lua, shell, PowerShell and batch
+- **Markdown preview** side by side, scroll-synced
 
 ### Customization
 - **Themes** — GitHub Dark, Dracula, Tokyo Night, Cyberpunk, Nord, and a full custom theme editor
 - **Theme import** — load iTerm2 `.itermcolors` files and Windows Terminal colour schemes (single scheme, array, or an entire `settings.json`)
 - **Font & background** — set font family, size, and a custom background image with blur/opacity control
-- **Tamagotchi pet** — animated ASCII companion (cat, dog, dragon, robot, ghost, fox) that reacts to what you type, earns achievements and coins from real terminal activity, and wears ASCII cosmetics bought in the wardrobe
+- **Tamagotchi pet** — animated ASCII companion (cat, dog, dragon, robot, ghost, fox) that reacts to what you type — and, where the shell reports exit codes, to whether commands actually succeeded, so "0 errors" in a passing build no longer makes it sad — earns achievements and coins from real terminal activity, and wears ASCII cosmetics bought in the wardrobe
 
 ---
 
@@ -171,15 +185,14 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `docker-dash` | Docker Dashboard — start/stop containers, view logs |
 | `weather [city]` | Weather Card — animated current conditions card |
 | `ping [host]` | Ping Monitor — live latency graph |
-| `port-scan [host]` | Port Scanner — scan open ports |
+| `port-scan [host]` | Port Scanner — scan open ports (`portscan` also works) |
 | `ps` | Process Table — sortable process list |
-| `query [sql]` | Data Table — SQL-like queries on system data |
 | `ftermfetch` | System Info — customizable neofetch-style card; export as PNG |
 | `snippets` | Snippets Manager — save and insert reusable commands |
 | `imgcat <path>` | Image Viewer — open an image in a full-pane overlay with zoom controls |
 | `viz [path]` | Audio Visualizer — play audio files with 11 real-time visualizer styles, queue management, beat-sync pet ⚠️ |
 | `clipboard` | Clipboard Manager — read / write host clipboard, paste directly to terminal |
-| `browser` | Web Browser — hardened in-app browser overlay with ad/tracker blocking and bookmarks |
+| `browse [url]` / `browser [url]` | Web Browser — hardened in-app browser overlay with ad/tracker blocking and bookmarks |
 | `note` / `notes` | Notes Scratchpad — per-session markdown notes with autosave; optional export to `~/.fterm/notes/` |
 
 ---
@@ -209,6 +222,7 @@ Type any of these in the terminal to open an interactive panel. Press **Esc** to
 | `Ctrl+Shift+L` | Force redraw (escape hatch for stuck TUI ghosting) |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Jump to previous / next command prompt |
 | `Ctrl+Shift+B` | Toggle the command block list for the pane |
+| `Ctrl+Shift+H` | Search every command ever run |
 | _(configurable)_ | Summon / hide the drop-down terminal — set your own hotkey in Settings → General |
 
 ---
@@ -244,12 +258,46 @@ FTerm does **not** ship with any pre-registered OAuth client IDs, telemetry, or 
 
 ## Session Recording
 
-Click the **record button** (top-right of any terminal pane) to start capturing.
+Click the **record button** (top-right of any terminal pane) to start capturing. Pause and resume as you go.
 
-- Terminal output is sampled at 10 fps during the session
+- Terminal output is sampled at 10 fps; identical frames are skipped, so an idle terminal costs nothing
 - Widgets open during recording are composited as overlays
-- Stop recording to trigger background video encoding
-- The finished `.mp4` is saved to your system **Videos** folder
+- **Stopping opens the studio**, not an encoder. Nothing is written to disk until you ask for it
+
+In the studio you can:
+
+- **Scrub** the take and step frame by frame (`Space`, `←`/`→`, `Home`/`End`)
+- **Trim** with the grips or `I` / `O`, and **cut** spans out of the middle — drag across the lower lane to select, then `X`. Click a red block to put it back
+- **Undo / redo** every edit with `Ctrl+Z` / `Ctrl+Shift+Z`
+- Set **speed**, **size** (up to 1080p, or square for social), **frame rate** and **quality**
+- Turn the **automatic camera** on or off and tune how far it zooms, how long it holds a framing and how slowly it moves
+- Export as **`.mp4`**, **GIF** or **`.cast`** — and re-export the same take at different settings without recording again
+
+The finished file is saved to your system **Videos** folder. Recording stops itself after 20 minutes.
+
+---
+
+## Command History
+
+Every command that finishes is written to `command-history.jsonl` in FTerm's data folder, with its exit code, duration and working directory.
+
+Press `Ctrl+Shift+H` to search it:
+
+| Query | Finds |
+|---|---|
+| `npm build` | anything whose command line contains both words |
+| `cwd:fterm` | commands run anywhere under a path containing "fterm" |
+| `exit:fail` | commands that returned a non-zero exit code |
+| `since:7d` | the last week (`m`, `h`, `d`, `w`) |
+| `npm cwd:website exit:fail since:2d` | all of the above at once |
+
+Repeats collapse onto their most recent run with a count. Enter puts a command back on the prompt **without running it**.
+
+**What is not recorded.** Values that look like passwords, tokens, API keys or credentials are stripped before anything reaches disk — including credentials inside URLs, the attached `-ppassword` form, PowerShell `$env:` assignments, and the known token shapes (GitHub, GitLab, OpenAI, Anthropic, Google, AWS, Slack, npm, Hugging Face, Stripe, JWT). Commands whose arguments are secrets by definition (`psql`, `openssl`, `gpg`, `mysql`…) keep the command name and nothing else. A command **typed with a leading space is never recorded at all**, the convention every POSIX shell already uses.
+
+Capturing each command's **output** is a separate switch and is **off by default** — it is the part most likely to contain something you did not mean to keep.
+
+Both switches, a stats readout and a delete-everything button are in **Settings → General → Command history**.
 
 ---
 
@@ -397,7 +445,7 @@ Planned features and ideas — contributions welcome.
 > not planned as of now
 
 - **Fitbit / health sync** — correlate coding activity with sleep, steps, and heart rate from Fitbit or Apple Health; show "deep work" scores alongside health data
-- **Per-command timing** — average duration, slowest commands, p95 latency
+- ✅ **Per-command timing** — every command's duration is recorded in the persistent history and searchable; aggregate views (slowest commands, p95) are still open
 
 ### `ftermfetch` Customization
 - ✅ **Custom layout editor** — toggle and reorder fields (hostname, OS, shell, pet level, AI usage, uptime, streak…) in Settings → Stats
@@ -410,13 +458,15 @@ Planned features and ideas — contributions welcome.
 - **Inline diff view** — when AI suggests a code fix, show a side-by-side diff before applying it to a file in the Monaco editor
 - **Voice input** — push-to-talk to dictate commands or chat messages
 
-### Distribution (not planned as of now)
-- **In-app updates** — check the installed version against the latest GitHub release and update in place, instead of downloading the installer by hand
-- **Code signing** — remove the SmartScreen warning on Windows installs
+### Distribution
+- **Code signing** — removes the SmartScreen warning and the first-launch Defender scan. Azure Trusted Signing (~$10/month, no hardware token) is the likely route; OV certificates have required an HSM or token since June 2023, and only EV grants SmartScreen reputation immediately. This should land **before** in-app updates: shipping self-updating unsigned binaries makes the warning worse, not better
+- ✅ **Update notice** — once a day FTerm checks GitHub's release list and shows a link when a newer version is out (Settings → General → Updates). Nothing is downloaded or installed automatically
+- **In-app updates** — update in place instead of downloading the installer by hand; waits for code signing
 
 ### Terminal
 - ✅ **Command blocks** — OSC 133 shell integration; prompt-to-prompt navigation, per-command exit code and timing, copy output without selecting
 - ✅ **Drop-down terminal** — global hotkey summons FTerm over any application
+- ✅ **Persistent command history** — searchable across sessions, with exit code, duration and directory; secrets redacted before anything is written
 - **Session restore** — reconnect to a detached PTY session after FTerm restarts (tmux-style persistence)
 - **Broadcast input** — type once, send to all open panes simultaneously
 - **Scrollback search with regex** — highlight all matches in the scrollback buffer, not just navigate one by one
@@ -424,7 +474,13 @@ Planned features and ideas — contributions welcome.
 
 ### Themes
 - ✅ **Import iTerm2 / Windows Terminal schemes** — `.itermcolors` files and Windows Terminal `settings.json` colour schemes
-- **Per-profile theme** — bind a theme to a shell profile so each context looks distinct
+- ✅ **Per-profile theme** — bind a theme to a shell profile so each context looks distinct
+
+### Recording
+- ✅ **Recording studio** — trim, cut, speed, size and frame rate before anything is encoded, with undo
+- ✅ **Automatic camera** — frames what is changing on screen and eases between framings
+- ✅ **GIF and asciicast export** — `.cast` is the text itself, not a picture of it
+- **Audio narration** — record microphone alongside the terminal and mux it into the video
 
 ### Pet
 - ✅ **Pet achievements** — 15 achievements from real terminal activity, paying coins
@@ -467,30 +523,38 @@ electron/                        # Main process (Node.js / Electron)
 │   ├── secureStore.ts           # OS keychain via safeStorage
 │   ├── githubOAuth.ts           # GitHub OAuth device flow + Copilot token exchange
 │   ├── quakeMode.ts             # Drop-down terminal: global hotkey + window geometry
+│   ├── commandHistory.ts        # Persistent command history (JSON Lines in userData)
 │   └── remoteTerminalServer.ts  # WebSocket server for remote PTY sessions
 ├── security/
 │   └── validators.ts            # Pure, Electron-free security checks (+ tests)
 └── video/
-    ├── FrameRenderer.ts         # Canvas-based terminal frame renderer
-    ├── SceneDetector.ts         # Command/error scene detection from events
-    └── VideoComposer.ts         # ffmpeg video assembly from frame snapshots
+    ├── FrameRenderer.ts         # Snapshot → PNG on node-canvas, via the shared painter
+    └── VideoComposer.ts         # ffmpeg MP4 / GIF assembly from frame snapshots
 
 src/                             # Renderer (React + TypeScript, no Node access)
 ├── App.tsx                      # Root layout
 ├── store/index.ts               # Zustand store (tabs, themes, pet, AI, settings)
 ├── services/
 │   ├── CommandBlocks.ts         # OSC 133 command-block tracking, one tracker per pane
-│   └── TerminalRecorder.ts      # Captures terminal snapshots + command events
+│   ├── TerminalRecorder.ts      # Captures terminal snapshots + command events
+│   └── recording/               # paintFrame (shared painter), edit plan, camera track,
+│                                # asciicast export, block-as-image, undo history (+ tests)
 ├── utils/
 │   ├── shellIntegration.ts      # OSC 133 protocol parsing (+ tests)
+│   ├── commandHistory.ts        # Secret redaction + history query rules (+ tests)
+│   ├── widgetCommands.ts        # Which typed commands open which widget (+ tests)
+│   ├── frecency.ts              # zoxide-style directory ranking (+ tests)
+│   ├── updateCheck.ts           # Release list → "newer version?" (+ tests)
 │   ├── themeImport.ts           # iTerm2 / Windows Terminal scheme importers (+ tests)
 │   └── petAchievements.ts       # Achievements, coins and cosmetics rules (+ tests)
 └── components/
-    ├── Terminal/                 # xterm.js + PTY, split panes, recording controls, history search
+    ├── Terminal/                 # xterm.js + PTY, split panes, recording controls, history search, command history panel
+    ├── Editor/                   # Monaco editor tab, language picker
     ├── Widgets/                  # File explorer, sys-mon, docker, weather, ping, port-scan, snippets, audio visualizer, clipboard
     ├── AI/                       # Streaming chat sidebar + message rendering
     ├── Pet/                      # Animated ASCII tamagotchi
-    └── Views/                    # Settings, Themes, Plugins, Git, Pet, Profiles, Stats
+    ├── Update/                   # Update notice
+    └── Views/                    # Settings, Themes, Plugins, Git, Pet, Profiles, Stats, Recording studio
 ```
 
 ---

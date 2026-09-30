@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { useStore, THEMES } from '@/store'
+import { useStore, THEMES, findNode } from '@/store'
 import { terminalInstances } from '@/components/Terminal/terminalRegistry'
 import { Settings, Search, Play, Terminal, Command, X, Plus, Code2, Save, RotateCcw } from 'lucide-react'
-import { Trash2, Sparkles, Paintbrush, ChevronsUp, ClipboardCopy } from 'lucide-react'
+import { Trash2, Sparkles, Paintbrush, ChevronsUp, ClipboardCopy, FolderOpen } from 'lucide-react'
 import { getTracker } from '@/services/CommandBlocks'
+import { cdCommand, rankDirs, shellKind } from '@/utils/frecency'
 
 interface PaletteAction {
   id: string
@@ -160,11 +161,56 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
     return [...baseActions, ...widgetActions, ...snippetActions, ...savedLayoutActions, ...deletedLayoutActions, ...tabActions, ...profileActions, ...sshHostActions, ...themeActions]
   }, [addTab, addTabFn, closeTab, activeTabId, ai.sidebarOpen, setAIConfig, setSettings, setActiveView, onToggleSearch, tabs, setActiveTab, profiles, setTheme, snippets, savedLayouts, saveCurrentLayout, deleteSavedLayout, sshHosts, connectSshHost, setPendingWidget])
 
+  const dirVisits = useStore(s => s.dirVisits)
+
+  /**
+   * Frequent directories, zoxide-style. Typing `z <words>` shows only these;
+   * any other query mixes the best few in with the regular actions.
+   */
   const filtered = useMemo(() => {
-    if (!query) return actions
+    const zMode = /^z(\s|$)/i.test(query)
+    const dirQuery = zMode ? query.slice(1).trim() : query
+    const dirs = rankDirs(dirVisits, dirQuery, Date.now(), zMode ? 12 : query ? 5 : 3)
+    const dirActions: PaletteAction[] = dirs.map(d => ({
+      id: `dir-${d.path}`,
+      label: `Go to ${d.path}`,
+      group: 'Directories',
+      icon: <FolderOpen size={14} />,
+      action: () => goToDir(d.path),
+    }))
+    if (zMode) return dirActions
+    if (!query) return [...dirActions, ...actions]
     const q = query.toLowerCase()
-    return actions.filter(a => a.label.toLowerCase().includes(q) || a.group?.toLowerCase().includes(q))
-  }, [actions, query])
+    return [...dirActions, ...actions.filter(a => a.label.toLowerCase().includes(q) || a.group?.toLowerCase().includes(q))]
+  }, [actions, query, dirVisits])
+
+  /**
+   * `cd` in the active pane when its shell is sitting at a prompt; otherwise
+   * (a TUI is up, a command is running, or it is not a terminal tab) open a
+   * new tab there instead of typing into whatever has the keyboard.
+   */
+  function goToDir(dir: string) {
+    const state = useStore.getState()
+    const tab = state.tabs.find(t => t.id === state.activeTabId)
+    const paneId = tab?.activePaneId ?? '0'
+    const instanceId = tab ? `${tab.id}-${paneId}` : ''
+    const term = instanceId ? terminalInstances.get(instanceId) : undefined
+    const busy = !term
+      || tab?.type === 'editor' || tab?.type === 'browser'
+      || term.buffer.active.type === 'alternate'
+      || getTracker(instanceId)?.getBlocks().some(b => b.running)
+    const profileId = tab?.layout ? findNode(tab.layout, paneId)?.profileId : undefined
+    if (busy) { state.addTab(profileId, dir); return }
+    const shell = state.profiles.find(p => p.id === profileId)?.shell
+    const kind = shellKind(shell, /Win/i.test(navigator.platform) ? 'win32' : 'other')
+    const line = cdCommand(dir, kind)
+    if (!line) { state.addTab(profileId, dir); return }
+    // Clear whatever is half-typed first: Escape reverts the line in
+    // PSReadLine and cmd, Ctrl+U kills it in readline shells.
+    const clear = kind === 'posix' ? '\x15' : '\x1b'
+    window.fterm.ptyWrite(instanceId, `${clear}${line}`)
+    term.focus()
+  }
 
   useEffect(() => { setSelected(0) }, [query])
 
@@ -239,7 +285,7 @@ export default function CommandPalette({ onClose, onToggleSearch }: Props) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search commands, tabs, presets, or themes..."
+            placeholder="Search commands, tabs, themes… or z <dir> to jump"
             className="bg-transparent text-base text-white outline-none w-full placeholder:text-white/30"
           />
         </div>

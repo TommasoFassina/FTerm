@@ -10,10 +10,13 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
 import { useStore, useActiveTheme, getOrderedPaneIds } from '@/store'
 import { useAI } from '@/hooks/useAI'
-import { isErrorOutput, analyzeOutput } from '@/utils/petReactions'
+import { isErrorOutput, analyzeOutput, reactToExit, EXIT_OWNED_LABELS, type Reaction } from '@/utils/petReactions'
 import { parseOsc133 } from '@/utils/shellIntegration'
+import { resolveBrowserInput, resolveSearchTemplate } from '@/utils/browserUrl'
+import { parseWidgetCommand, WIDGET_ARG_DEFAULTS } from '@/utils/widgetCommands'
 import { CommandBlockTracker, registerTracker, disposeTracker } from '@/services/CommandBlocks'
 import CommandBlocksPanel from './CommandBlocksPanel'
+import CommandHistoryPanel from './CommandHistoryPanel'
 import ContextMenu from '@/components/ContextMenu/ContextMenu'
 import { pluginManager } from '@/plugins'
 import { AnimatePresence, motion } from 'motion/react'
@@ -73,10 +76,23 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       return value
     })
   }, [])
+  const [showHistory, setShowHistory] = useState(false)
+  const showHistoryRef = useRef(false)
+  const setHistoryPanel = useCallback((next: boolean | ((v: boolean) => boolean)) => {
+    setShowHistory(prev => {
+      const value = typeof next === 'function' ? next(prev) : next
+      showHistoryRef.current = value
+      return value
+    })
+  }, [])
   const [inTuiMode, setInTuiMode] = useState(false)
   const scrollbarDragRef = useRef<{ startY: number; startViewportY: number } | null>(null)
   const closeWidget = useCallback(() => {
     setActiveWidget(null)
+    // The browser widget's <webview> can hold native OS keyboard focus even
+    // after it leaves the DOM (Windows-specific Electron quirk) — reclaim it
+    // before refocusing the terminal, or keystrokes silently vanish.
+    window.fterm.focusWindow?.()
     setTimeout(() => termRef.current?.focus(), 50)
   }, [])
 
@@ -88,7 +104,14 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
   const selectionAnchorRef = useRef<{ col: number; row: number } | null>(null)
   const selectionCursorRef = useRef<{ col: number; row: number } | null>(null)
 
-  const theme = useActiveTheme()
+  // A profile can pin its own theme (e.g. red-tinted for production shells);
+  // everything else follows the app theme.
+  const appTheme = useActiveTheme()
+  const profileTheme = useStore(s => {
+    const id = s.profiles.find(p => p.id === profileId)?.themeId
+    return id ? s.themes.find(t => t.id === id) : undefined
+  })
+  const theme = profileTheme ?? appTheme
   const { sendMessage } = useAI()
   const settings = useStore(s => s.settings)
   const profiles = useStore(s => s.profiles)
@@ -395,6 +418,36 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     const blockTracker = new CommandBlockTracker(term, instanceId)
     registerTracker(instanceId, blockTracker)
     blockTrackerRef.current = blockTracker
+
+    // Pet reactions. Once this pane's shell reports exit codes, the exit code
+    // is the judge of success and failure; output text only supplies the
+    // "working on it" moods while a command runs.
+    let exitCodesSeen = false
+    const applyPetReaction = (reaction: Reaction) => {
+      const store = useStore.getState()
+      store.setLastActivity(reaction.label)
+      store.setPetState(reaction.state)
+      if (reaction.state === 'celebrating') store.addPetXp(100)
+      else if (reaction.state === 'happy') store.addPetXp(50)
+      if (reaction.duration > 0) {
+        setTimeout(() => {
+          if (useStore.getState().petState === reaction.state) useStore.getState().setPetState('idle')
+        }, reaction.duration)
+      }
+    }
+    const settlePet = () => {
+      // Don't interrupt happy/celebrating — only clear the "in progress" moods.
+      const cur = useStore.getState().petState
+      if (cur === 'working' || cur === 'worried' || cur === 'sad') useStore.getState().setPetState('idle')
+    }
+    const offBlockFinished = blockTracker.onBlockFinished(block => {
+      if (block.exitCode === null) return
+      exitCodesSeen = true
+      if (isTUI()) return
+      const reaction = reactToExit(block)
+      if (reaction) applyPetReaction(reaction)
+      else settlePet()
+    })
     const osc133Disposable = term.parser.registerOscHandler(133, (data) => {
       const evt = parseOsc133(data)
       if (!evt) return true
@@ -432,15 +485,22 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     }
 
     const removePtyData = window.fterm.onPtyData(instanceId, rawData => {
+      // Every pattern below needs one of these two prefixes. Most chunks are plain
+      // output containing neither, and an indexOf is far cheaper than a regex scan
+      // of a chunk that cannot match — so look once and skip the rest.
+      const hasCsi = rawData.includes('\x1b[');
+      const hasPrivateCsi = hasCsi && rawData.includes('\x1b[?');
+      const hasOsc = rawData.includes('\x1b]');
+
       // Detect cls / clear screen sequences (ED2: ESC[2J or ESC[3J) and dispose decorations
-      if (/\x1b\[(?:2|3)J/.test(rawData)) {
+      if (hasCsi && /\x1b\[(?:2|3)J/.test(rawData)) {
         disposeAllDecorations();
       }
 
       // Track alt-screen (TUI apps: vim, claude code, less, htop). Ignore error/pet
       // detection while active — TUI text often contains the word "error" in normal UI,
       // and ConPTY redraws would otherwise spam markers and pet sad-state.
-      if (/\x1b\[\?1049h|\x1b\[\?47h|\x1b\[\?1047h/.test(rawData)) {
+      if (hasPrivateCsi && /\x1b\[\?1049h|\x1b\[\?47h|\x1b\[\?1047h/.test(rawData)) {
         inAltScreen = true;
         setInTuiMode(true)
         disposeAllDecorations();
@@ -448,7 +508,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
         updateAcUI(null);
         currentInputRef.current = '';
       }
-      if (/\x1b\[\?1049l|\x1b\[\?47l|\x1b\[\?1047l/.test(rawData)) {
+      if (hasPrivateCsi && /\x1b\[\?1049l|\x1b\[\?47l|\x1b\[\?1047l/.test(rawData)) {
         inAltScreen = false;
         setInTuiMode(false)
         recentDataBuf = '';
@@ -464,7 +524,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       }
 
       // Parse OSC 9998 first — clean prompt (exit=0) means stale error content should be discarded
-      const osc9998 = rawData.match(/\x1b\]9998;(\d+)(?:\x07|\x1b\\)/)
+      const osc9998 = hasOsc ? rawData.match(/\x1b\]9998;(\d+)(?:\x07|\x1b\\)/) : null
       const exitCodeError = osc9998 ? parseInt(osc9998[1], 10) !== 0 : false
       // Always clear on any prompt signal — prevents stale error text re-triggering on Enter.
       // Current chunk is accumulated right after, so error+prompt in same chunk still detected.
@@ -472,14 +532,24 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
 
       // Accumulate AFTER clear so current chunk's content (including any error text) is testable
       recentDataBuf = (recentDataBuf + rawData).slice(-RECENT_BUF_MAX);
-      // Strip VT/ANSI sequences before testing — ConPTY may inject escape codes mid-word
-      const strippedBuf = recentDataBuf.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '')
 
-      // CMD (all locales): quoted command + "intern" (internal/interno/interne/intern)
-      // PS (all locales): exception class names are always English; also match PS "not recognized" pattern
-      const cmdNotFound = /["'][^"']{1,60}["'][^.\n]*intern/i.test(strippedBuf)
-        || /CommandNotFoundException|NotFoundException|is not recognized.*cmdlet|riconosciuto.*cmdlet|non reconnu.*applet|nicht erkannt.*cmdlet/i.test(strippedBuf)
-      const bufHasError = isErrorOutput(strippedBuf)
+      // Error detection is three regex passes plus a strip of the whole buffer, run
+      // once per PTY chunk — and a TUI redrawing itself is the heaviest chunk source
+      // there is. The write callback below already discards all of it while an
+      // alt-screen app is up, so don't compute it: `inAltScreen` is only mutated
+      // synchronously above, so whenever it is set here `isTUI()` is true there too.
+      let cmdNotFound = false
+      let bufHasError = false
+      if (!inAltScreen) {
+        // Strip VT/ANSI sequences before testing — ConPTY may inject escape codes mid-word
+        const strippedBuf = recentDataBuf.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '')
+
+        // CMD (all locales): quoted command + "intern" (internal/interno/interne/intern)
+        // PS (all locales): exception class names are always English; also match PS "not recognized" pattern
+        cmdNotFound = /["'][^"']{1,60}["'][^.\n]*intern/i.test(strippedBuf)
+          || /CommandNotFoundException|NotFoundException|is not recognized.*cmdlet|riconosciuto.*cmdlet|non reconnu.*applet|nicht erkannt.*cmdlet/i.test(strippedBuf)
+        bufHasError = isErrorOutput(strippedBuf)
+      }
 
 
       term.write(rawData, () => {
@@ -522,25 +592,16 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       const stripped = rawData.replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, '').replace(/\r/g, '').trim()
       if (!isTUI() && stripped.length > 3) {
         const reaction = analyzeOutput(stripped)
-        if (reaction) {
+        if (reaction && !(exitCodesSeen && EXIT_OWNED_LABELS.has(reaction.label))) {
           const curState = useStore.getState().petState
           if (reaction.state === 'idle') {
+            // With exit codes the block-finished handler settles the pet.
             // Only reset to idle from working/worried — don't interrupt happy/celebrating
-            if (curState === 'working' || curState === 'worried') {
+            if (!exitCodesSeen && (curState === 'working' || curState === 'worried')) {
               useStore.getState().setPetState('idle')
             }
           } else {
-            useStore.getState().setLastActivity(reaction.label)
-            useStore.getState().setPetState(reaction.state)
-            if (reaction.state === 'celebrating') useStore.getState().addPetXp(100)
-            else if (reaction.state === 'happy') useStore.getState().addPetXp(50)
-            if (reaction.duration > 0) {
-              setTimeout(() => {
-                if (useStore.getState().petState === reaction.state) {
-                  useStore.getState().setPetState('idle')
-                }
-              }, reaction.duration)
-            }
+            applyPetReaction(reaction)
           }
         }
       }
@@ -666,11 +727,21 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       }
 
       // ── Clipboard shortcuts ──────────────────────────────────────────────
-      // Ctrl+V / Ctrl+Shift+V: do NOT intercept — let xterm handle paste via the
-      // textarea paste event so bracketed paste mode (\x1b[200~...\x1b[201~) is
-      // respected. Intercepting here AND letting the paste event fire causes double
-      // input, and the raw write bypasses bracketed paste mode which confuses apps
-      // like Claude CLI that rely on it (manifests as erased text on paste).
+      // Ctrl+V: explicit handling via the Clipboard API rather than relying on
+      // the textarea's native 'paste' event, which can silently no-op in
+      // Electron depending on focus/permission state. preventDefault() below
+      // stops the native paste from also firing (which would double the input).
+      if (e.type === 'keydown' && e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          if (!text) return
+          // Use bracketed paste if app enabled it (xterm tracks DECSET 2004)
+          const bp = (term as any).modes?.bracketedPasteMode
+          const payload = bp ? `\x1b[200~${text}\x1b[201~` : text
+          window.fterm.ptyWrite(instanceId, payload)
+        }).catch(() => { })
+        return false
+      }
       // Ctrl+Shift+C → copy selection (Ctrl+C alone must remain SIGINT)
       if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
         e.preventDefault()
@@ -708,6 +779,17 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           setBlocksPanel(v => !v)
           return false
         }
+        // Ctrl+Shift+H — the persistent history, across every session
+        if (e.key === 'H' || e.key === 'h') {
+          e.preventDefault()
+          setHistoryPanel(v => !v)
+          return false
+        }
+      }
+      if (e.type === 'keydown' && e.key === 'Escape' && showHistoryRef.current) {
+        e.preventDefault()
+        setHistoryPanel(false)
+        return false
       }
       // Escape closes the block list before anything else consumes the key.
       if (e.type === 'keydown' && e.key === 'Escape' && showBlocksRef.current) {
@@ -770,284 +852,141 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           return false
         }
 
-        // imgcat <path> — opens image in overlay widget (avoids xterm Canvas repaint issues)
-        if (input.startsWith('imgcat ') || input === 'imgcat') {
-          e.preventDefault()
-          const rawArg = input.slice(7).trim().replace(/^["']|["']$/g, '')
-          const inputLen = currentInputRef.current.length
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          // Erase typed command from PTY display
-          window.fterm.ptyWrite(instanceId, '\x7f'.repeat(inputLen))
-          if (!rawArg) {
-            term.write(`\r\n\x1b[33mUsage: imgcat <path-to-image>\x1b[0m\r\n`)
-            return false;
+        /* One dispatch, driven by `parseWidgetCommand`. Each widget used to
+           carry its own copy of the argument parsing, the plugin gate and the
+           erase-input / newline / dismiss-autocomplete boilerplate; the copies
+           had drifted apart. The decision is now pure and tested — everything
+           below is only the doing. */
+        const intent = parseWidgetCommand(input)
+        if (intent) {
+          const PLUGIN_LABEL: Record<string, string> = {
+            'file-explorer': 'File Explorer', 'sys-mon': 'System Monitor',
+            docker: 'Docker', weather: 'Weather', 'data-table': 'Data Table',
           }
-          (async () => {
-            try {
-              const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd
-                || window.fterm.homedir
-              const sep = cwd.includes('\\') ? '\\' : '/'
-              const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(rawArg)
-              const full = isAbs ? rawArg : (cwd.replace(/[\\/]+$/, '') + sep + rawArg)
-              const { base64 } = await window.fterm.fsReadImage(full)
-              const ext = full.split('.').pop()?.toLowerCase() ?? ''
-              const mime = ext === 'png' ? 'image/png'
-                : ext === 'gif' ? 'image/gif'
-                : ext === 'webp' ? 'image/webp'
-                : ext === 'svg' ? 'image/svg+xml'
-                : 'image/jpeg'
-              setActiveWidget({ type: 'imgcat', data: { path: full, base64, mime } })
-            } catch (err: any) {
-              console.error('[imgcat] error', err)
-              term.write(`\r\n\x1b[31mimgcat: ${err?.message || 'failed'}\x1b[0m\r\n`)
+          if (intent.plugin) {
+            const enabled = plugins.find(pl => pl.id === intent.plugin)?.enabled ?? true
+            if (!enabled) {
+              term.writeln(`\r\n\x1b[31mError: ${PLUGIN_LABEL[intent.plugin] ?? intent.plugin} plugin is disabled. Enable it in the Plugins menu.\x1b[0m`)
+              currentInputRef.current = ''
+              return true
             }
-          })()
-          return false
-        }
-
-        // browse [url] → in-pane browser widget ; browser [url] → new browser tab
-        if (input === 'browse' || input.startsWith('browse ') || input === 'browser' || input.startsWith('browser ')) {
-          e.preventDefault()
-          const asTab = input === 'browser' || input.startsWith('browser ')
-          const arg = input.replace(/^browser?\s*/, '').trim().replace(/^["']|["']$/g, '')
-          const url = arg
-            ? (/^https?:\/\//i.test(arg) ? arg
-              : /^[^\s]+\.[^\s]{2,}/.test(arg) ? 'https://' + arg
-                : 'https://duckduckgo.com/?q=' + encodeURIComponent(arg))
-            : undefined
-          window.fterm.ptyWrite(instanceId, '\x7f'.repeat(currentInputRef.current.length))
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          if (asTab) useStore.getState().addBrowserTab(url)
-          else setActiveWidget({ type: 'browser', data: { url } })
-          return false
-        }
-
-        // explore [path]
-        if (input === 'explore' || input.startsWith('explore ')) {
-          const pluginEnabled = plugins.find(p => p.id === 'file-explorer')?.enabled ?? true
-          if (!pluginEnabled) {
-            term.writeln('\r\n\x1b[31mError: File Explorer plugin is disabled. Enable it in the Plugins menu.\x1b[0m')
-            currentInputRef.current = ''
-            return true
           }
-          e.preventDefault()
-          const argPath = input.replace(/^explore\s*/, '').trim()
-          const path = argPath || useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd || '.'
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({
-            type: 'file-explorer',
-            data: { path }
-          })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
 
-        // sys-mon
-        if (input === 'sys-mon') {
-          const pluginEnabled = plugins.find(p => p.id === 'sys-mon')?.enabled ?? true
-          if (!pluginEnabled) {
-            term.writeln('\r\n\x1b[31mError: System Monitor plugin is disabled. Enable it in the Plugins menu.\x1b[0m')
-            currentInputRef.current = ''
-            return true
-          }
           e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'sys-mon' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // docker-dash
-        if (input === 'docker-dash') {
-          const pluginEnabled = plugins.find(p => p.id === 'docker')?.enabled ?? true
-          if (!pluginEnabled) {
-            term.writeln('\r\n\x1b[31mError: Docker plugin is disabled. Enable it in the Plugins menu.\x1b[0m')
-            currentInputRef.current = ''
-            return true
-          }
-          e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'docker' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // weather [city]
-        if (input === 'weather' || input.startsWith('weather ')) {
-          const pluginEnabled = plugins.find(p => p.id === 'weather')?.enabled ?? true
-          if (!pluginEnabled) {
-            term.writeln('\r\n\x1b[31mError: Weather plugin is disabled. Enable it in the Plugins menu.\x1b[0m')
-            currentInputRef.current = ''
-            return true
-          }
-          e.preventDefault()
-          const city = input.replace(/^weather\s*/, '').trim()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({
-            type: 'weather',
-            data: { city: city.charAt(0).toUpperCase() + city.slice(1) }
-          })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // ping [host]
-        if (input === 'ping' || input.startsWith('ping ')) {
-          e.preventDefault()
-          const host = input.replace(/^ping\s*/, '').trim() || '8.8.8.8'
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'ping', data: { host } })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // portscan [host]
-        if (input === 'portscan' || input.startsWith('portscan ')) {
-          e.preventDefault()
-          const host = input.replace(/^portscan\s*/, '').trim() || 'localhost'
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'portscan', data: { host } })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // snippets
-        if (input === 'snippets') {
-          e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'snippets' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // note / notes (scratchpad)
-        if (input === 'note' || input === 'notes') {
-          e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'notes-pad' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        // ps / query (data table)
-        if (input === 'ps' || input === 'query' || input.startsWith('query ')) {
-          const pluginEnabled = plugins.find(p => p.id === 'data-table')?.enabled ?? true
-          if (!pluginEnabled) {
-            term.writeln('\r\n\x1b[31mError: Data Table plugin is disabled. Enable it in the Plugins menu.\x1b[0m')
-            currentInputRef.current = ''
-            return true
-          }
-          if (input === 'ps') {
-            e.preventDefault()
-            const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-            window.fterm.ptyWrite(instanceId, backspaces)
-            window.fterm.ptyWrite(instanceId, '\r\n')
+          const typedLength = currentInputRef.current.length
+          const eraseTyped = () => window.fterm.ptyWrite(instanceId, '\x7f'.repeat(typedLength))
+          /** Clears the local input state; `newline` sends the shell to a fresh prompt. */
+          const consumeInput = (newline = true) => {
+            if (newline) window.fterm.ptyWrite(instanceId, '\r\n')
             currentInputRef.current = ''
             if (ac) updateAcUI(null)
             autocompleteRef.current = null
-            window.fterm.systemProcesses().then(rows => {
-              setActiveWidget({
-                type: 'data-table',
-                data: {
-                  title: 'Process List',
-                  headers: ['PID', 'Name', 'CPU', 'Mem', 'Status', 'User'],
-                  rows,
-                }
-              })
-            }).catch(() => {
-              setActiveWidget({
-                type: 'data-table',
-                data: { title: 'Process List', headers: ['PID', 'Name', 'CPU', 'Mem', 'Status', 'User'], rows: [] }
-              })
-            })
-            return false
           }
-        }
-
-        if (input === 'ftermfetch') {
-          e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'ftermfetch' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
-
-        if (input === 'visualizer' || input === 'viz' || input.startsWith('visualizer ') || input.startsWith('viz ')) {
-          e.preventDefault()
-          const argRaw = input.startsWith('visualizer ')
-            ? input.slice(11).trim()
-            : input.startsWith('viz ')
-            ? input.slice(4).trim()
-            : ''
-          const arg = argRaw.replace(/^["']|["']$/g, '')
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          let fullPath: string | undefined
-          if (arg) {
+          /** Resolves a path argument against the pane's live working directory. */
+          const resolveArg = (a: string) => {
             const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd
               || window.fterm.homedir
             const sep = cwd.includes('\\') ? '\\' : '/'
-            const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(arg)
-            fullPath = isAbs ? arg : (cwd.replace(/[\\/]+$/, '') + sep + arg)
+            const isAbs = /^([A-Za-z]:[\\/]|\/)/.test(a)
+            return isAbs ? a : (cwd.replace(/[\\/]+$/, '') + sep + a)
           }
-          setVizWidget({ data: { path: fullPath } })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
-        }
+          const arg = intent.arg || WIDGET_ARG_DEFAULTS[intent.widget] || ''
 
-        if (input === 'clipboard' || input === 'clip') {
-          e.preventDefault()
-          const backspaces = '\x7f'.repeat(currentInputRef.current.length)
-          window.fterm.ptyWrite(instanceId, backspaces)
-          setActiveWidget({ type: 'clipboard' })
-          window.fterm.ptyWrite(instanceId, '\r\n')
-          currentInputRef.current = ''
-          if (ac) updateAcUI(null)
-          autocompleteRef.current = null
-          return false
+          switch (intent.widget) {
+            case 'imgcat': {
+              eraseTyped()
+              consumeInput(false)
+              if (!arg) {
+                term.write('\r\n\x1b[33mUsage: imgcat <path-to-image>\x1b[0m\r\n')
+                return false
+              }
+              const full = resolveArg(arg)
+              window.fterm.fsReadImage(full).then(({ base64 }) => {
+                const ext = full.split('.').pop()?.toLowerCase() ?? ''
+                const mime = ext === 'png' ? 'image/png'
+                  : ext === 'gif' ? 'image/gif'
+                  : ext === 'webp' ? 'image/webp'
+                  : ext === 'svg' ? 'image/svg+xml'
+                  : 'image/jpeg'
+                setActiveWidget({ type: 'imgcat', data: { path: full, base64, mime } })
+              }).catch((err: any) => {
+                term.write(`\r\n\x1b[31mimgcat: ${err?.message || 'failed'}\x1b[0m\r\n`)
+              })
+              return false
+            }
+
+            case 'browser':
+            case 'browser-tab': {
+              const { browserSearchEngine, browserSearchCustomUrl } = useStore.getState().settings
+              const url = resolveBrowserInput(
+                arg, resolveSearchTemplate(browserSearchEngine, browserSearchCustomUrl))
+              eraseTyped()
+              consumeInput(false)
+              if (intent.widget === 'browser-tab') useStore.getState().addBrowserTab(url)
+              else setActiveWidget({ type: 'browser', data: { url } })
+              return false
+            }
+
+            case 'file-explorer': {
+              const path = arg || useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd || '.'
+              eraseTyped()
+              setActiveWidget({ type: 'file-explorer', data: { path } })
+              consumeInput()
+              return false
+            }
+
+            case 'weather': {
+              eraseTyped()
+              setActiveWidget({
+                type: 'weather',
+                data: { city: arg.charAt(0).toUpperCase() + arg.slice(1) },
+              })
+              consumeInput()
+              return false
+            }
+
+            case 'ping':
+            case 'portscan': {
+              eraseTyped()
+              setActiveWidget({ type: intent.widget, data: { host: arg } })
+              consumeInput()
+              return false
+            }
+
+            case 'visualizer': {
+              eraseTyped()
+              setVizWidget({ data: { path: arg ? resolveArg(arg) : undefined } })
+              consumeInput()
+              return false
+            }
+
+            case 'data-table': {
+              eraseTyped()
+              consumeInput()
+              const headers = ['PID', 'Name', 'CPU', 'Mem', 'Status', 'User']
+              window.fterm.systemProcesses()
+                .then(rows => setActiveWidget({
+                  type: 'data-table', data: { title: 'Process List', headers, rows },
+                }))
+                .catch(() => setActiveWidget({
+                  type: 'data-table', data: { title: 'Process List', headers, rows: [] },
+                }))
+              return false
+            }
+
+            // widgets that take nothing and open immediately
+            case 'sys-mon':
+            case 'docker':
+            case 'snippets':
+            case 'notes-pad':
+            case 'ftermfetch':
+            case 'clipboard': {
+              eraseTyped()
+              setActiveWidget({ type: intent.widget })
+              consumeInput()
+              return false
+            }
+          }
         }
       }
 
@@ -1156,7 +1095,9 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             useStore.getState().addCommandHistory(currentInputRef.current.trim());
             // Opens a command block anchored at the current prompt row.
             const cwd = useStore.getState().tabs.find(t => t.id === tabId)?.currentCwd ?? '';
-            blockTrackerRef.current?.onCommandStart(currentInputRef.current.trim(), cwd);
+            // Untrimmed: the tracker trims for display but keeps the raw line,
+            // whose leading space is the "do not record this" signal.
+            blockTrackerRef.current?.onCommandStart(currentInputRef.current, cwd);
           }
           currentInputRef.current = '';
           autocompleteRef.current = null;
@@ -1303,6 +1244,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       osc0Disposable.dispose()
       osc2Disposable.dispose()
       osc133Disposable.dispose()
+      offBlockFinished()
       disposeTracker(instanceId)
       blockTrackerRef.current = null
       disposeAllDecorations()
@@ -1543,6 +1485,11 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
     <div
       ref={paneRootRef}
       className="w-full h-full relative"
+      // xterm draws on a transparent background; the app paints the theme's
+      // colour behind every pane, so a profile theme has to paint its own.
+      style={profileTheme && profileTheme.id !== appTheme.id
+        ? { backgroundColor: hexToRgba(profileTheme.background, settings.opacity ?? 0.85) }
+        : undefined}
       onClick={() => { if (!activeWidget) { setActivePane(tabId, paneId); termRef.current?.focus() } setCtxMenu(null) }}
       onMouseEnter={() => { if (!activeWidget) termRef.current?.focus() }}
       onContextMenuCapture={(e) => {
@@ -1563,6 +1510,7 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
             paneId={paneId}
             widgetEl={(activeWidget || vizWidget) ? paneRootRef.current : null}
             containerEl={paneRootRef.current}
+            themeId={profileTheme?.id}
           />
         </div>
       )}
@@ -1656,6 +1604,17 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
           }}
           onClose={() => {
             setShowHistorySearch(false)
+            termRef.current?.focus()
+          }}
+        />
+      )}
+
+      {showHistory && (
+        <CommandHistoryPanel
+          onClose={() => { setHistoryPanel(false); termRef.current?.focus() }}
+          onInsert={(command) => {
+            // Put it on the prompt, do not run it — the user decides.
+            window.fterm.ptyWrite(instanceId, command)
             termRef.current?.focus()
           }}
         />
@@ -1788,6 +1747,14 @@ export default function TerminalPane({ tabId, paneId, active, profileId }: Props
       </AnimatePresence>
     </div>
   )
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16) || 0
+  const g = parseInt(h.slice(2, 4), 16) || 0
+  const b = parseInt(h.slice(4, 6), 16) || 0
+  return `rgba(${r}, ${g}, ${b}, ${Math.min(1, Math.max(0, alpha))})`
 }
 
 function buildXtermTheme(t: ReturnType<typeof useActiveTheme>) {

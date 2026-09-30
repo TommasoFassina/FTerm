@@ -12,6 +12,7 @@ import CommandPalette from '@/components/CommandPalette/CommandPalette'
 import CommandBuilder from '@/components/CommandPalette/CommandBuilder'
 import Sidebar from '@/components/Sidebar/Sidebar'
 import WelcomeOverlay from '@/components/Welcome/WelcomeOverlay'
+import UpdateNotice from '@/components/Update/UpdateNotice'
 import { AnimatePresence, motion } from 'motion/react'
 import { terminalInstances } from '@/components/Terminal/terminalRegistry'
 
@@ -22,6 +23,7 @@ const ProfilesView = lazy(() => import('@/components/Views/ProfilesView'))
 const PluginsView  = lazy(() => import('@/components/Views/PluginsView'))
 const GitView      = lazy(() => import('@/components/Views/GitView'))
 const PetView      = lazy(() => import('@/components/Views/PetView'))
+const RecordingStudio = lazy(() => import('@/components/Views/RecordingStudio'))
 const EditorPane   = lazy(() => import('@/components/Editor/EditorPane'))
 const BrowserView  = lazy(() => import('@/components/Browser/BrowserView'))
 
@@ -312,6 +314,7 @@ export default function App() {
                   {activeView === 'git' && <GitView key="git" />}
                   {activeView === 'pet' && <PetView key="pet" />}
                   {activeView === 'settings' && <SettingsView key="settings" />}
+                  {activeView === 'studio' && <RecordingStudio key="studio" />}
                 </Suspense>
               </AnimatePresence>
             </motion.div>
@@ -323,6 +326,7 @@ export default function App() {
 
         {/* Overlays */}
         <Pet />
+        <UpdateNotice />
         <AnimatePresence>
           {!settings.hasSeenWelcome && <WelcomeOverlay />}
         </AnimatePresence>

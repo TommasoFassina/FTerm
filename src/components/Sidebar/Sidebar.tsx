@@ -50,15 +50,16 @@ export default function Sidebar() {
     const setActiveView = useStore(s => s.setActiveView)
     const setAIConfig = useStore(s => s.setAIConfig)
     const addBrowserTab = useStore(s => s.addBrowserTab)
+    const isActiveTabBrowser = useStore(s => s.tabs.find(t => t.id === s.activeTabId)?.type === 'browser')
     const theme = useActiveTheme();
     const accent = theme.blue || '#58a6ff';
     const isRight = settings.layout?.navSidebarPosition === 'right';
 
     return (
         <div className={`w-12 h-full flex flex-col items-center py-3 gap-1 ${isRight ? 'border-l' : 'border-r'} border-white/5 z-40`}>
-            <SidebarIcon icon={<TerminalIcon size={18} />} label="Terminal" active={activeView === 'terminal'} onClick={() => setActiveView('terminal')} accent={accent} isRight={isRight} />
+            <SidebarIcon icon={<TerminalIcon size={18} />} label="Terminal" active={activeView === 'terminal' && !isActiveTabBrowser} onClick={() => setActiveView('terminal')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<GitBranch size={18} />} label="Source Control" active={activeView === 'git'} onClick={() => setActiveView('git')} accent={accent} isRight={isRight} />
-            <SidebarIcon icon={<Globe size={18} />} label="New Browser Tab" active={false} onClick={() => { setActiveView('terminal'); addBrowserTab() }} accent={accent} isRight={isRight} />
+            <SidebarIcon icon={<Globe size={18} />} label="New Browser Tab" active={activeView === 'terminal' && isActiveTabBrowser} onClick={() => { setActiveView('terminal'); addBrowserTab() }} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Layout size={18} />} label="Profiles" active={activeView === 'profiles'} onClick={() => setActiveView('profiles')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Palette size={18} />} label="Themes" active={activeView === 'themes'} onClick={() => setActiveView('themes')} accent={accent} isRight={isRight} />
             <SidebarIcon icon={<Blocks size={18} />} label="Plugins" active={activeView === 'plugins'} onClick={() => setActiveView('plugins')} accent={accent} isRight={isRight} />

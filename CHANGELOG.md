@@ -2,6 +2,74 @@
 
 All notable changes to FTerm are documented here.
 
+## [0.1.6] — 2026-09-30
+
+### Added
+- **Persistent command history** — command blocks already knew each command's exit code, duration and working directory; until now all of it was discarded when the tab closed. Finished commands are now written to `command-history.jsonl` in your FTerm data folder and survive restarts.
+  - `Ctrl+Shift+H` searches everything you have ever run, with real filters: `npm cwd:fterm exit:fail since:7d`. `in:` is an alias for `cwd:`, durations accept `m`/`h`/`d`/`w`, and anything unrecognised stays free text rather than being silently dropped.
+  - Repeated commands collapse onto their most recent run with a count — a history listing `npm test` four hundred times is a history nobody scrolls.
+  - Enter puts a command back on the prompt **without running it**.
+  - **Secrets are stripped before anything is written.** Assignments and flags whose name looks like a credential, credentials embedded in URLs, both the attached `-ppassword` and separated `-p password` forms, the password half of `-u user:pass`, secrets carried in a header value (`-H "Authorization: Bearer …"`, where the flag says nothing and the header *name* is what must be judged), a bare word that names a secret followed by its value (`aws configure set aws_secret_access_key …`), the Windows forms (`$env:X = …`, `[Environment]::SetEnvironmentVariable`, `ConvertTo-SecureString`, `net user`), and the known token shapes (GitHub, GitLab, OpenAI, Anthropic, Google/Gemini, AWS, Slack, npm, Hugging Face, Stripe, JWT) are all redacted; for commands whose arguments *are* secrets by definition (`psql`, `openssl`, `gpg`, `mysql`…) every argument is dropped. The matching is deliberately eager: a false positive costs a hidden argument, a false negative writes a live credential to disk. Values that only look like secrets positionally are kept, so `docker run -p 8080:80` stays re-runnable.
+  - **A command typed with a leading space is never recorded**, the convention every POSIX shell already uses.
+  - Output capture is a separate switch and is **off by default** — it is the part most likely to contain something you did not mean to keep. When on, output is truncated to 4 KB per entry and redacted the same way.
+  - Settings → General → Command history: both switches, a stats readout and a delete-everything button. The log is capped at 20 000 entries and compacted atomically.
+- **Recording studio** — stopping a recording no longer starts an encode. The take opens in a full-screen editor first.
+  - Scrub the take, **trim** it with draggable grips, **cut** spans out of the middle, set speed, size (up to 1080p and square), frame rate and quality — then export.
+  - The preview canvas is painted by the **same code as the exporter**, so what you scrub through is the file you get. The drawing was extracted out of `FrameRenderer` into `src/services/recording/paintFrame.ts`, shared between node-canvas in the main process and a real `<canvas>` in the renderer.
+  - The timeline is two lanes with two jobs: a ruler that seeks, and a clip lane that selects. Kept material is green, cuts are red blocks you click to restore, camera pushes are a blue band, and ticks mark where commands actually ran.
+  - **Undo/redo** over every edit (`Ctrl+Z` / `Ctrl+Shift+Z`), with a direct "Cut 3.2 s — Undo" offer after each action. A trim drag is one undo step, not two hundred.
+  - Keyboard: `Space` play, `←`/`→` step a frame (`Shift` for ten), `I`/`O` set the trim points, `X` cut the selection, `Home`/`End`.
+  - The take stays in memory after an export, so it can be **re-exported** at a different size, format or trim without recording again.
+- **Automatic camera in recordings** — the auto-zoom was previously a stub: `SceneDetector` produced scenes, none of them ever carried a `zoomRect`, and the painter's zoom path never ran. It is now real.
+  - Frames whatever is changing on screen, holds that framing long enough to be readable, and moves between framings on a smoothstep curve. A new framing is only committed once the previous one has been held (configurable, default 1.4 s) — that single rule is what stops the camera hopping between two ends of the screen while a build log scrolls.
+  - Never leaves the frame, never zooms below a meaningful magnification (a 5 % push reads as a wobble), stays at 1× when the whole screen is busy, and pulls back to 1× while a widget owns the pane — a widget capture is a raster, and magnifying it only makes it soft.
+  - Switchable, with sliders for maximum zoom, hold time and move duration, all previewed live.
+- **GIF and asciicast export** — an `.mp4` of a terminal is a picture of text. `.cast` (asciicast v2) is the text itself: kilobytes instead of megabytes, selectable, searchable, and it goes in a README. GIF uses a single palette generated from the whole clip rather than one per frame, which is what keeps the theme's colours intact. Both honour the same trim, cuts and speed as the video.
+- **Copy a command block as an image** — the thing people paste into issues ten times a day. In the block list, click the image button to put a PNG on the clipboard, or Shift-click to save a file. It reuses the recorder's painter, so it comes out in your theme and font, and the card carries the working directory plus the **exit code and duration** — which a screenshot never does.
+- **Pause and resume a recording** — the timeline stops with it, so a pause does not become thirty seconds of still screen to trim out later.
+- **Editor: unsaved-change tracking** — a dot in the tab bar and in the toolbar, confirmation before closing a dirty tab (close button, middle-click, context menu) and a `beforeunload` guard. Closing an editor with unsaved work used to lose it silently.
+- **Editor: the theme follows the app.** Monaco was pinned to `vs-dark`, so a Dracula or Nord terminal sat next to a VS Code grey editor in the same window. The editor's theme is now built from the active terminal palette, light backgrounds included.
+- **Editor: a status bar that is made of controls** — position (click to go to line), selection size, line count, path, wrap toggle and the language picker. The language selector was a native `<select>`, whose popup is drawn by the OS: on Windows it came up as a white list in a dark window with lowercase Monaco ids for labels. It is now a searchable picker that also matches on extension — typing `.tsx` or `rs` finds the language.
+- **Editor: recent files** — the Open button has a dropdown of the last ten, de-duplicated case-insensitively the way Windows paths behave, and pruned automatically when a file is no longer there.
+- **Editor: Save As** (`Ctrl+Shift+S`), **Reload from disk**, `Ctrl+S` that works when focus is outside Monaco, and minimap / word-wrap toggles.
+- **Editor: a warning when the file changes underneath you** — one `stat()` every three seconds while the tab is visible (no descriptor held open on a file you may want to move), with Reload / Overwrite / Dismiss. New IPC `fs:stat` returns mtime and size only, never content.
+- **Editor: markdown preview scroll sync**, bracket-pair colouring, sticky scroll, indent guides, ligatures, `Ctrl`+wheel zoom, and the font size from your settings instead of a hardcoded 14 px.
+- `port-scan` is accepted alongside `portscan` — the hyphenated spelling is the one most people reach for first.
+- **Update notice.** Once a day FTerm asks GitHub for its release list and, when a newer version exists, shows a small notice linking to the download. It never downloads or installs anything — in-place updates wait for signed builds. Off switch and *Check now* in Settings → General → Updates; a dismissed version is not shown again.
+- **Frequent directories, zoxide-style.** Every change of directory a shell reports is counted and ranked by frequency × recency. In the command palette, `z` followed by a few letters lists only those (`z src app` finds `…/src/my-app`), and the best matches also appear in ordinary searches. Choosing one `cd`s the active pane, quoted for PowerShell, cmd or POSIX shells; if the pane is running something or showing a TUI, a new tab opens there instead.
+- **The pet judges commands by their exit code.** Where the shell reports one (OSC 133), success and failure come from the code, not from words in the output: a passing build that prints "0 errors" no longer makes the pet sad, Ctrl+C is not a failure, 127/9009 read as *command not found* and crash statuses on both platforms as *crashed*, and a test run is not rewarded twice. Long commands (over a minute) earn a cheer when they succeed. Output text still supplies the "working on it" moods.
+- **Per-profile tab colour and theme.** A profile's colour now reaches the tabs launched from it (or *Auto* for the rotating palette), and a profile can pin a theme for its panes. Recordings of such a pane keep its theme in the studio and the export.
+
+### Changed
+- **Widget-command interception is now one tested decision instead of fifteen copies.** Each intercepted command carried its own argument parsing, plugin gate and erase-input boilerplate, and the copies had drifted apart. `src/utils/widgetCommands.ts` answers *which widget, with what argument* as a pure function; `TerminalPane` still owns everything that actually happens.
+- **Editor language detection is one table.** Three separate literals — extension→language, language→extension and the runner map — had drifted, so `.mjs`, `.cjs`, `.mts`, `.toml`, `.ini`, `.env` and `Dockerfile.dev` all opened as plain text. `src/utils/editorLang.ts` is now the single source, shared with the file explorer.
+- **A saved file runs from where it lives**, so relative imports and the working directory behave as the author expects; only an unsaved buffer goes through the temp directory.
+- Recording snapshots skip identical frames. An idle terminal was pushing ten identical frames a second for as long as you left it running; one frame per second is still forced so the timeline advances and scrubbing stays smooth.
+- Widget captures inside a take are deduplicated into a side array instead of being inlined as a base64 PNG on every snapshot, and an unchanged panel reuses its frame. A recording with a widget open no longer grows by hundreds of megabytes.
+- Recordings stop themselves at a 20-minute ceiling with a clear message, rather than growing until the window dies.
+- Export progress is counted from our own frame counter. ffmpeg's estimate has no duration to measure against on piped input, so it was frequently `NaN` and the bar sat at zero until the very end. Exports can also be cancelled, and a cancelled export deletes its truncated file instead of leaving it behind.
+- Removed `electron/video/SceneDetector.ts`, fully superseded by the camera track.
+- `alert()` in the editor replaced with inline toasts.
+
+### Fixed
+- **PowerShell reported failed cmdlets as success.** The prompt hook read only `$LASTEXITCODE`, which a failed cmdlet or an unknown command never sets, so `Get-Item` on a missing path or a typo'd command came through as exit 0 — a green block, a ✓ in the command history and a happy pet. A false `$?` with no native code is now reported as exit 1, and negative exit codes (Windows crash statuses) count as failures for error detection too.
+- **Studio keyboard shortcuts did nothing until you clicked.** The studio opened with the terminal still focused, so Space, `I`/`O`, `X` and the arrows were ignored by the studio and typed into the shell behind it.
+- **Studio quality slider was off the scale.** The default quality sat below the slider's range, so it showed as minimum, and moving it jumped the encoder to near-lossless (CRF 6). The slider now spans CRF 32 → 16 with the default in the middle.
+- **The last frame of every recording was dropped.** The trim range is half-open, and the final frame of a take sits exactly on its end.
+- **The exporter could show a line before it was printed.** It picked the snapshot *nearest* in time; it now picks the one in effect — the last at or before that moment.
+- **A file opened from the explorer never recorded its on-disk contents**, so with the new dirty tracking it would have read as modified from the moment it opened.
+- **The Rust runner wrote its binary to `/tmp`**, a path that does not exist on the platform FTerm ships first. It now lands next to the source.
+- **A profile's working directory was ignored** whenever another tab was open: the new tab inherited the active tab's directory first. A directory set on the profile now wins.
+- **`query` was advertised but never implemented.** The old code checked the Data Table plugin and then let the line fall through to the shell. It has been removed from the app, the README and the website rather than given an invented behaviour — the intercepted commands are **fourteen**, not sixteen.
+
+### Security
+- Command-history redaction and the leading-space skip rule are covered by unit tests, and output capture is opt-in.
+- New `fs:writeFileBase64` (for PNG payloads) goes through the same path allowlist as `fs:writeFile`, with a size cap.
+- `fs:stat` returns metadata only and is subject to the same allowlist.
+
+### Tests
+- **319 unit cases, up from 88.** New coverage: widget-command interception, the editor's language table and dirty-state rules, the Monaco theme builder, recent files, the recording timeline (trim / cuts / speed / frame mapping), the camera track, the undo stack, asciicast export, block-image rendering, the command-history redaction and query rules, version comparison for the update notice, directory frecency and `cd` quoting, and the exit-code pet reactions.
+
 ## [0.1.5] — 2026-08-06
 
 ### Deprecated

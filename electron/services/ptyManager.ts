@@ -169,7 +169,10 @@ export function createSession(
   // renderer. Emitted via Console::Write rather than inside the returned prompt
   // string: invisible sequences in the prompt confuse PSReadLine's width maths.
   const osc133Emit = String.raw`[Console]::Write([char]27+']133;D;'+$(if($null -ne $_e){[string][int]$_e}else{'0'})+[char]7+[char]27+']133;A'+[char]7)`
-  const pwshPromptFn = String.raw`$_e=$LASTEXITCODE;$LASTEXITCODE=0;${osc7Emit};[Console]::Write([char]27+']9998;'+$(if($_e -gt 0) {'1'} else {'0'})+[char]7);${osc133Emit};return ($pwd.Path+'> ')`
+  // A failed cmdlet or an unknown command sets $? but leaves $LASTEXITCODE alone,
+  // so a false $? with no native code is reported as 1. Negative codes are
+  // Windows crash statuses (0xC0000005 …) — failures, hence -ne rather than -gt.
+  const pwshPromptFn = String.raw`$_ok=$?;$_e=$LASTEXITCODE;if(-not $_ok -and -not $_e){$_e=1};$LASTEXITCODE=0;${osc7Emit};[Console]::Write([char]27+']9998;'+$(if([int]$_e -ne 0) {'1'} else {'0'})+[char]7);${osc133Emit};return ($pwd.Path+'> ')`
   const pwshInit = [
     'try { Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue } catch {}',
     `function prompt { ${pwshPromptFn} }`,

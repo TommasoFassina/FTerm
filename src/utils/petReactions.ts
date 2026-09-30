@@ -90,3 +90,61 @@ export function isErrorOutput(data: string): boolean {
   }
   return false
 }
+
+/* ── reactions from real exit codes ─────────────────────────────────────── */
+
+/**
+ * Labels `reactToExit` decides once a pane's shell reports exit codes
+ * (OSC 133;D). The output-text guesses for these are ignored in that pane:
+ * "0 errors" in a passing build no longer makes the pet sad, and a passing
+ * test run is not rewarded twice (once for the text, once for the code).
+ */
+export const EXIT_OWNED_LABELS = new Set([
+  'error', 'permission', 'not_found', 'cmd_not_found', 'timeout', 'crashed', 'disk_full', 'oom',
+  'tests_passed', 'build_success', 'git_push', 'git_commit', 'git_merge',
+])
+
+/** A long command finishing is worth a cheer on its own. */
+export const LONG_COMMAND_MS = 60_000
+
+const TEST_CMD = /\b(pytest|jest|vitest|mocha|go test|cargo test|dotnet test|(npm|pnpm|yarn|bun)( run)? test)\b/
+const BUILD_CMD = /\b((npm|pnpm|yarn|bun)( run)? build|cargo build|go build|dotnet build|make|cmake --build|gradle|mvn|tsc)\b/
+
+/** Signed 32-bit NTSTATUS codes arrive as either sign depending on the shell. */
+const u32 = (n: number) => n >>> 0
+
+/**
+ * The pet's reaction to a finished command, judged by its exit code rather
+ * than its output. `null` means "nothing worth reacting to" — the caller
+ * settles the pet back to idle.
+ */
+export function reactToExit(cmd: { command: string; exitCode: number | null; durationMs: number | null }): Reaction | null {
+  const { exitCode, durationMs } = cmd
+  if (exitCode === null) return null
+  const command = cmd.command.trim()
+
+  if (exitCode === 0) {
+    if (TEST_CMD.test(command)) return { state: 'celebrating', duration: 4000, label: 'tests_passed' }
+    if (BUILD_CMD.test(command)) return { state: 'celebrating', duration: 4000, label: 'build_success' }
+    if (/^git push\b/.test(command)) return { state: 'happy', duration: 3000, label: 'git_push' }
+    if (/^git commit\b/.test(command)) return { state: 'happy', duration: 3000, label: 'git_commit' }
+    if (/^git merge\b/.test(command)) return { state: 'happy', duration: 3000, label: 'git_merge' }
+    if ((durationMs ?? 0) >= LONG_COMMAND_MS) return { state: 'happy', duration: 4000, label: 'long_done' }
+    return null
+  }
+
+  const code = u32(exitCode)
+  // Ctrl+C: the user stopped it, nothing failed. 130 = 128 + SIGINT;
+  // 0xC000013A = STATUS_CONTROL_C_EXIT on Windows.
+  if (exitCode === 130 || code === 0xC000013A) return null
+  // 127 (POSIX) / 9009 (cmd) — the command does not exist.
+  if (exitCode === 127 || exitCode === 9009) return { state: 'worried', duration: 3000, label: 'cmd_not_found' }
+  // 126 — found but not executable.
+  if (exitCode === 126) return { state: 'sad', duration: 3000, label: 'permission' }
+  // Killed by a signal (137 SIGKILL, 139 SIGSEGV…) or a Windows crash status
+  // (0xC0000005 access violation, 0xC00000FD stack overflow, …).
+  if ((exitCode > 128 && exitCode < 160) || (code >= 0xC0000000 && code <= 0xCFFFFFFF)) {
+    return { state: 'sad', duration: 5000, label: 'crashed' }
+  }
+  return { state: 'sad', duration: 4000, label: 'error' }
+}

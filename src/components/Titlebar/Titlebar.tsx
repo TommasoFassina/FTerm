@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useStore, getConfigSnapshot, IS_DETACHED, TAB_PALETTE } from '@/store'
 import { Terminal, FileCode, Plus, ChevronDown, TerminalSquare, Code, Settings, Command, Folder } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
+import { isTabDirty } from '@/utils/editorDirty'
 
 const PROFILE_ICONS: Record<string, JSX.Element> = {
   TerminalSquare: <TerminalSquare size={11} />,
@@ -22,6 +23,12 @@ export default function Titlebar() {
   const addTab = useStore(s => s.addTab)
   const addEditorTab = useStore(s => s.addEditorTab)
   const closeTab = useStore(s => s.closeTab)
+  /* Closing an editor with unsaved work used to lose it without a word. */
+  const requestCloseTab = (id: string) => {
+    const t = useStore.getState().tabs.find(x => x.id === id)
+    if (isTabDirty(t) && !confirm(`"${t?.title}" has unsaved changes. Close it anyway?`)) return
+    closeTab(id)
+  }
   const closeOtherTabs = useStore(s => s.closeOtherTabs)
   const duplicateTab = useStore(s => s.duplicateTab)
   const setActiveTab = useStore(s => s.setActiveTab)
@@ -179,7 +186,7 @@ export default function Titlebar() {
               }}
               onClick={() => { setActiveTab(tab.id); clearTabBell(tab.id) }}
               onDoubleClick={(e: React.MouseEvent) => { e.stopPropagation(); startRename(tab.id, tab.title) }}
-              onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); if (e.button === 1) { e.preventDefault(); closeTab(tab.id) } }}
+              onMouseDown={(e: React.MouseEvent) => { e.stopPropagation(); if (e.button === 1) { e.preventDefault(); requestCloseTab(tab.id) } }}
               onContextMenu={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setTabCtxMenu({ tabId: tab.id, x: e.clientX, y: e.clientY }) }}
               style={{ overflow: 'hidden', flexShrink: 0 } as React.CSSProperties}
             >
@@ -227,8 +234,12 @@ export default function Titlebar() {
               ) : (
                 <span className="truncate flex-1 font-medium" title={tab.title}>{tab.title}</span>
               )}
+              {isTabDirty(tab) && (
+                <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#e3b341]"
+                      title="Unsaved changes" />
+              )}
               <button
-                onClick={e => { e.stopPropagation(); closeTab(tab.id) }}
+                onClick={e => { e.stopPropagation(); requestCloseTab(tab.id) }}
                 className="opacity-0 group-hover:opacity-50 hover:!opacity-100 hover:bg-white/10 p-0.5 rounded-sm transition-all shrink-0"
                 style={{ opacity: tab.id === activeTabId ? 0.4 : undefined }}
               >
@@ -343,7 +354,7 @@ export default function Titlebar() {
               null,
               'color' as const,
               null,
-              { label: 'Close', action: () => closeTab(tabCtxMenu.tabId) },
+              { label: 'Close', action: () => requestCloseTab(tabCtxMenu.tabId) },
               { label: 'Close Others', action: () => closeOtherTabs(tabCtxMenu.tabId), disabled: tabs.length <= 1 },
             ].map((item, i) =>
               item === null

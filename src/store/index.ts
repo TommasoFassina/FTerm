@@ -33,11 +33,15 @@ import type {
   FtermfetchConfig, FetchFieldId,
   ClaudeCodeStats,
   ClaudeCodeUsage,
+  TerminalProfile,
 } from '@/types'
+import { PROFILE_COLORS } from '@/types'
 import {
   deriveMetrics, evaluateAchievements, totalReward,
   purchaseRefusal, getCosmetic, COIN_EVENTS,
 } from '@/utils/petAchievements'
+import { dirKey, recordVisit, type DirVisits } from '@/utils/frecency'
+import type { UpdateInfo } from '@/utils/updateCheck'
 
 // ─── Built-in themes ──────────────────────────────────────────────────────────
 
@@ -93,8 +97,11 @@ export const THEMES: Theme[] = [
 
 interface FTermState {
   // Navigation
-  activeView: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet'
-  setActiveView: (view: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet') => void
+  activeView: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet' | 'studio'
+  /** The take waiting in the recording studio. Runtime only — never persisted. */
+  studioTake: import('../services/TerminalRecorder').RecordingTake | null
+  setStudioTake: (take: import('../services/TerminalRecorder').RecordingTake | null) => void
+  setActiveView: (view: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet' | 'studio') => void
 
   // Detected shells (runtime, not persisted)
   availableShells: Array<{ id: string; name: string; shell: string; icon: string }>
@@ -115,12 +122,18 @@ interface FTermState {
 
   // CWD tracking (persisted per profile)
   profileCwds: Record<string, string>
+  /** Directories panes have moved into, ranked zoxide-style in the palette. */
+  dirVisits: DirVisits
+  clearDirVisits: () => void
+  /** Set when a newer release was found. Runtime only. */
+  availableUpdate: UpdateInfo | null
+  setAvailableUpdate: (info: UpdateInfo | null) => void
   updateProfileCwd: (profileId: string, cwd: string) => void
   updateTabCwd: (tabId: string, paneId: string, cwd: string) => void
 
-  profiles: { id: string, name: string, icon: string, shell?: string, args?: string[], cwd?: string, env?: Record<string, string> }[]
-  addProfile: (profile: Omit<{ id: string, name: string, icon: string, shell?: string, args?: string[], cwd?: string, env?: Record<string, string> }, 'id'>) => void
-  updateProfile: (id: string, updates: Partial<{ name: string, icon: string, shell?: string, args?: string[], cwd?: string, env?: Record<string, string> }>) => void
+  profiles: TerminalProfile[]
+  addProfile: (profile: Omit<TerminalProfile, 'id'>) => void
+  updateProfile: (id: string, updates: Partial<Omit<TerminalProfile, 'id'>>) => void
   deleteProfile: (id: string) => void
   plugins: { id: string, name: string, description: string, enabled: boolean, isCustom?: boolean, code?: string }[]
   togglePlugin: (id: string) => void
@@ -165,13 +178,16 @@ interface FTermState {
   // Tabs
   tabs: Tab[]
   activeTabId: string | null
-  addTab: (profileId?: string) => void
+  /** `cwd` overrides the inherited directory (active tab's, then the profile's). */
+  addTab: (profileId?: string, cwd?: string) => void
   addTabWithCommand: (command: string, cwd?: string, title?: string) => void
   addEditorTab: (content?: string, language?: string, filePath?: string) => void
   addBrowserTab: (url?: string) => void
   setEditorContent: (tabId: string, content: string) => void
   setEditorLanguage: (tabId: string, language: string) => void
   setEditorFilePath: (tabId: string, filePath: string) => void
+  /** Records the on-disk content, clearing the tab's dirty state. */
+  markEditorSaved: (tabId: string, content: string) => void
   closeTab: (id: string) => void
   detachTabAway: (id: string) => void
   adoptTab: (tab: Tab) => void
@@ -314,6 +330,8 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
 export const TAB_PALETTE = ['#58a6ff', '#3fb950', '#d29922', '#f78166', '#bc8cff', '#39c5cf', '#ff7b72', '#e3b341']
 
 let tabCounter = 0
+/** Last cwd each pane reported, to tell a `cd` from a prompt redraw. */
+const lastPaneCwd = new Map<string, string>()
 let paneCounter = 0
 let splitCounter = 0
 
@@ -376,7 +394,7 @@ const newTab = (profileId?: string, initialCwd?: string): Tab => {
   }
 }
 
-function findNode(node: SplitNode, id: string): SplitNode | null {
+export function findNode(node: SplitNode, id: string): SplitNode | null {
   if (node.id === id || node.paneId === id) return node;
   if (node.first) {
     const found = findNode(node.first, id);
@@ -535,7 +553,9 @@ export const useStore = create<FTermState>()(
     (set, get) => ({
       // Navigation
       activeView: 'terminal',
-      setActiveView: (view: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet') => set({ activeView: view }),
+      setActiveView: (view: 'terminal' | 'profiles' | 'themes' | 'plugins' | 'settings' | 'git' | 'pet' | 'studio') => set({ activeView: view }),
+      studioTake: null,
+      setStudioTake: (take) => set({ studioTake: take }),
 
       // Detected shells
       availableShells: [],
@@ -584,7 +604,17 @@ export const useStore = create<FTermState>()(
       updateProfileCwd: (profileId, cwd) => set(s => ({
         profileCwds: { ...s.profileCwds, [profileId]: cwd }
       })),
+      dirVisits: {},
+      clearDirVisits: () => set({ dirVisits: {} }),
+      availableUpdate: null,
+      setAvailableUpdate: (info) => set({ availableUpdate: info }),
       updateTabCwd: (tabId, paneId, cwd) => {
+        // A visit is a *change* of directory: shells report the cwd at every
+        // prompt, and the directory a pane starts in is not a choice.
+        const paneKey = `${tabId}-${paneId}`
+        const prevCwd = lastPaneCwd.get(paneKey)
+        lastPaneCwd.set(paneKey, cwd)
+        const visited = prevCwd !== undefined && dirKey(prevCwd) !== dirKey(cwd)
         set(s => {
           const tab = s.tabs.find(t => t.id === tabId)
           const paneNode = tab?.layout ? findNode(tab.layout, paneId) : null
@@ -594,6 +624,7 @@ export const useStore = create<FTermState>()(
               ? { ...t, currentCwd: cwd }
               : t),
             profileCwds: { ...s.profileCwds, [profileId]: cwd },
+            ...(visited ? { dirVisits: recordVisit(s.dirVisits, cwd, Date.now()) } : {}),
           }
         })
       },
@@ -620,7 +651,7 @@ export const useStore = create<FTermState>()(
         { id: 'sys-mon', name: 'System Monitor', description: 'Run `sys-mon` to view live CPU/RAM/network charts.', enabled: true },
         { id: 'docker', name: 'Docker Dashboard', description: 'Run `docker-dash` to manage containers interactively.', enabled: true },
         { id: 'weather', name: 'Weather Widget', description: 'Run `weather [city]` to display a live weather card.', enabled: true },
-        { id: 'data-table', name: 'Data Table', description: 'Run `ps` or `query` to render tabular output as a sortable table.', enabled: true },
+        { id: 'data-table', name: 'Data Table', description: 'Run `ps` to see processes as a sortable table.', enabled: true },
         { id: 'visualizer', name: 'Audio Visualizer', description: 'Run `viz` or `visualizer` to play an audio file with bars/wave/ASCII spectrum visualization.', enabled: true },
         { id: 'clipboard', name: 'Clipboard History', description: 'Run `clip` or `clipboard` to view, search, pin, and paste from clipboard history.', enabled: true },
       ],
@@ -737,16 +768,19 @@ export const useStore = create<FTermState>()(
       tabs: [newTab()],
       activeTabId: 'tab-1',
 
-      addTab: (profileId?: string) => {
+      addTab: (profileId?: string, cwd?: string) => {
         const state = get()
         // Inherit CWD from active tab or profile's saved CWD
         const activeTab = state.tabs.find(t => t.id === state.activeTabId)
-        const inheritedCwd = activeTab?.currentCwd
+        const profile = profileId ? state.profiles.find(p => p.id === profileId) : undefined
+        // A directory set on the profile is a choice, so it beats inheriting.
+        const inheritedCwd = (typeof cwd === 'string' && cwd) || profile?.cwd || activeTab?.currentCwd
           || state.profileCwds[profileId || 'default']
           || (typeof window !== 'undefined' ? (window as any).fterm?.homedir : undefined)
           || undefined
         const tab = newTab(profileId, inheritedCwd)
         if (inheritedCwd) tab.currentCwd = inheritedCwd
+        if (profile?.color && PROFILE_COLORS[profile.color]) tab.color = PROFILE_COLORS[profile.color]
         set(s => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' }))
       },
       addTabWithCommand: (command: string, cwd?: string, title?: string) => {
@@ -779,7 +813,10 @@ export const useStore = create<FTermState>()(
           type: 'editor',
           editorContent: content || '',
           editorLanguage: language || 'plaintext',
-          editorFilePath: filePath
+          editorFilePath: filePath,
+          // A file opened from disk starts clean; a blank scratch buffer has
+          // nothing on disk to compare against and stays undefined.
+          editorSavedContent: filePath ? (content || '') : undefined,
         }
         set(s => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' }))
       },
@@ -789,7 +826,7 @@ export const useStore = create<FTermState>()(
           title: 'Browser',
           color: TAB_PALETTE[(tabCounter - 1) % TAB_PALETTE.length],
           type: 'browser',
-          browserUrl: url || 'https://duckduckgo.com',
+          browserUrl: url || get().settings.browserHomepage || 'https://start.duckduckgo.com/',
         }
         set(s => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, activeView: 'terminal' }))
       },
@@ -826,6 +863,9 @@ export const useStore = create<FTermState>()(
       })),
       setEditorFilePath: (tabId, filePath) => set(s => ({
         tabs: s.tabs.map(t => t.id === tabId ? { ...t, editorFilePath: filePath } : t)
+      })),
+      markEditorSaved: (tabId, content) => set(s => ({
+        tabs: s.tabs.map(t => t.id === tabId ? { ...t, editorContent: content, editorSavedContent: content } : t)
       })),
       closeTab: (id) => {
         const { tabs, activeTabId } = get()
@@ -1515,6 +1555,7 @@ export const useStore = create<FTermState>()(
         pet: s.pet,
         petProgress: s.petProgress,
         profileCwds: s.profileCwds,
+        dirVisits: s.dirVisits,
         // Persist chat history (streaming messages are cleaned up before save)
         chatMessages: s.chatMessages
           .filter(m => !m.streaming)

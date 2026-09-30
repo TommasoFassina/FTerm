@@ -47,10 +47,33 @@ export interface Tab {
   editorContent?: string
   editorLanguage?: string
   editorFilePath?: string
+  /** Content as it last hit disk. Differs from editorContent ⇒ unsaved changes. */
+  editorSavedContent?: string
   /** Live CWD — updated via OSC 7 from PTY, not persisted */
   currentCwd?: string
   /** True when the user has manually renamed this tab — prevents auto-title updates */
   manualTitle?: boolean
+}
+
+/** A preset for launching terminals: shell, directory, environment, look. */
+export interface TerminalProfile {
+  id: string
+  name: string
+  icon: string
+  shell?: string
+  args?: string[]
+  cwd?: string
+  env?: Record<string, string>
+  /** Accent id from PROFILE_COLORS; tabs launched from it take that colour. Absent or 'auto' = rotating palette. */
+  color?: string
+  /** Theme for this profile's panes. Absent = follow the app theme. */
+  themeId?: string
+}
+
+/** Profile accent ids → tab colour. */
+export const PROFILE_COLORS: Record<string, string> = {
+  blue: '#58a6ff', green: '#3fb950', purple: '#bc8cff',
+  orange: '#d29922', red: '#ff7b72', cyan: '#39c5cf',
 }
 
 export interface Bookmark {
@@ -232,6 +255,10 @@ export interface FtermfetchConfig {
 export interface AppSettings {
   fontSize: number
   fontFamily: string
+  /** Persist finished command blocks to disk. Default on. */
+  commandHistoryEnabled?: boolean
+  /** Also keep a truncated copy of each command's output. Default off. */
+  commandHistoryOutput?: boolean
   ligatures: boolean
   opacity: number
   blurEnabled: boolean
@@ -279,8 +306,20 @@ export interface AppSettings {
   }
   /** In-app browser: auto-update the bundled uBlock Origin Lite from GitHub. Default on. */
   browserUbolAutoUpdate?: boolean
+  /** In-app browser: homepage URL for new tabs and the Home button. Default https://start.duckduckgo.com/ */
+  browserHomepage?: string
+  /** In-app browser: search engine used for non-URL address-bar input. One of SEARCH_ENGINES' ids, default 'duckduckgo'. */
+  browserSearchEngine?: string
+  /** Custom search URL template (must contain %s) used when browserSearchEngine is 'custom'. */
+  browserSearchCustomUrl?: string
   /** Drop-down (quake) terminal — toggled from anywhere by a global hotkey. */
   quake?: QuakeSettings
+  /** Ask GitHub once a day whether a newer release exists. Default on. */
+  checkForUpdates?: boolean
+  /** Epoch ms of the last update check, automatic or manual. */
+  lastUpdateCheck?: number
+  /** A release the user closed the notice for — not shown again. */
+  dismissedUpdateVersion?: string
 }
 
 export interface QuakeSettings {

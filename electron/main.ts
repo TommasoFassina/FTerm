@@ -7,7 +7,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 import { join } from 'path'
 import { homedir, tmpdir, cpus as osCpus, freemem, totalmem, platform, release, hostname, userInfo, arch, uptime } from 'os'
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync, createReadStream } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, realpathSync, createReadStream, unlinkSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { execFile, exec } from 'child_process'
 import { promisify } from 'util'
@@ -110,9 +110,11 @@ import { setKey, deleteKey, hasKey, listConnected } from './services/secureStore
 import { startDeviceFlow, pollForToken, startRedirectFlow, clearCopilotToken } from './services/githubOAuth'
 import { startPKCEFlow } from './services/pkceOAuth'
 import { gitService } from './services/gitService'
-import { composeVideo } from './video/VideoComposer'
+import { composeVideo, ComposeCancelled } from './video/VideoComposer'
+import { commandHistory } from './services/commandHistory'
 import { isWithinRoots, isValidContainerId, GITHUB_TOKEN_RE } from './security/validators'
 import * as quake from './services/quakeMode'
+import { toUpdateInfo, type UpdateInfo } from '../src/utils/updateCheck'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: BrowserWindow | null = null
@@ -486,6 +488,14 @@ ipcMain.on('shell:open-path', (_e, filePath: string) => {
 })
 
 ipcMain.handle('window:is-maximized', (e) => senderWin(e)?.isMaximized() ?? false)
+
+// Reclaims native OS keyboard focus for the window. A <webview> (browser widget)
+// runs its guest page in a separate native surface — closing it in the DOM does
+// not reliably hand real OS-level key routing back to the host renderer on
+// Windows, leaving the terminal visually focused but deaf to keystrokes (space
+// included) until the user clicks it. Called right before the renderer
+// re-focuses the xterm textarea after closing the browser widget.
+ipcMain.on('window:focus', (e) => { senderWin(e)?.focus() })
 
 // ─── Quake / drop-down mode IPC ──────────────────────────────────────────────
 
@@ -897,6 +907,32 @@ ipcMain.handle('fs:readImage', (_e, filePath: string) => {
   return { mime: mime[ext], base64: data.toString('base64'), size: data.length }
 })
 
+/**
+ * Cheap "has this changed under me?" probe for the editor. Returns mtime and
+ * size only — never content — so polling it costs one stat() and no IPC payload
+ * worth speaking of.
+ */
+ipcMain.handle('fs:stat', (_e, filePath: string) => {
+  const path = require('path')
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('Invalid path')
+  const resolved = path.resolve(filePath)
+  if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
+  if (!existsSync(resolved)) return null
+  const st = statSync(resolved)
+  return { mtimeMs: st.mtimeMs, size: st.size, isDir: st.isDirectory() }
+})
+
+/** Same guard as fs:writeFile, for binary payloads that travel as base64. */
+ipcMain.handle('fs:writeFileBase64', (_e, filePath: string, base64: string) => {
+  const path = require('path')
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('Invalid path')
+  if (typeof base64 !== 'string' || base64.length > 64 * 1024 * 1024) throw new Error('Invalid payload')
+  const resolved = path.resolve(filePath)
+  if (!isPathAllowed(resolved)) throw new Error('Path not allowed')
+  writeFileSync(resolved, Buffer.from(base64, 'base64'))
+  return true
+})
+
 ipcMain.handle('fs:writeFile', (_e, filePath: string, content: string) => {
   const path = require('path')
   if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) throw new Error('Invalid path')
@@ -1135,38 +1171,131 @@ ipcMain.handle('window:captureRect', async (event, rect: { x: number; y: number;
 
 // ─── Recording IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('recording:stop', async (event, data: {
+/**
+ * Export a take to MP4.
+ *
+ * The renderer hands over the take plus the edit plan the studio produced;
+ * nothing is encoded until the user asks for it, so a recording can be
+ * re-exported at a different size, frame rate or trim without recording again.
+ */
+let exportCancelled = false
+
+ipcMain.on('recording:cancel', () => { exportCancelled = true })
+
+ipcMain.handle('recording:export', async (event, data: {
   snapshots: any[]
   events: any[]
+  widgetFrames?: string[]
   theme: any
   fontFamily?: string
   backgroundImage?: string
   backgroundBlur?: number
   backgroundOpacity?: number
+  plan?: any
+  fps?: number
+  width?: number
+  height?: number
+  crf?: number
+  camera?: any
+  format?: 'mp4' | 'gif'
+  fileName?: string
 }) => {
   const videos = app.getPath('videos')
-  const ts = Date.now()
-  const finalVideo = join(videos, `fterm-recording-${ts}.mp4`)
+  const safeName = (data.fileName ?? '').replace(/[^\w.-]+/g, '_').slice(0, 80)
+  const base = safeName || `fterm-recording-${Date.now()}`
+  const ext = data.format === 'gif' ? '.gif' : '.mp4'
+  const finalVideo = join(videos, base.toLowerCase().endsWith(ext) ? base : `${base}${ext}`)
 
+  exportCancelled = false
   try {
     await composeVideo({
       snapshots: data.snapshots,
       events: data.events,
+      widgetFrames: data.widgetFrames,
       outputPath: finalVideo,
-      fps: 10,
-      width: 1200,
-      height: 800,
+      fps: Math.max(1, Math.min(60, data.fps ?? 10)),
+      width: Math.max(320, Math.min(3840, data.width ?? 1200)),
+      height: Math.max(240, Math.min(2160, data.height ?? 800)),
       theme: data.theme,
       fontFamily: data.fontFamily,
       backgroundImage: data.backgroundImage,
       backgroundBlur: data.backgroundBlur,
       backgroundOpacity: data.backgroundOpacity,
+      plan: data.plan,
+      crf: Math.max(0, Math.min(51, data.crf ?? 23)),
+      format: data.format === 'gif' ? 'gif' : 'mp4',
+      camera: data.camera,
       onProgress: (p) => event.sender.send('recording:progress', p),
+      shouldCancel: () => exportCancelled,
     })
     return { videoPath: finalVideo }
   } catch (err: any) {
+    if (err instanceof ComposeCancelled || /cancelled/i.test(err?.message ?? '')) {
+      // A cancelled export leaves a truncated file behind — do not keep it.
+      try { if (existsSync(finalVideo)) unlinkSync(finalVideo) } catch { /* best effort */ }
+      return { cancelled: true }
+    }
     console.error('[recording] ERROR:', err)
     throw new Error(err?.message ?? String(err))
+  }
+})
+
+ipcMain.handle('recording:exportCast', (_e, data: { cast: string; fileName?: string }) => {
+  if (typeof data?.cast !== 'string') throw new Error('Nothing to write')
+  const videos = app.getPath('videos')
+  const safe = (data.fileName ?? '').replace(/[^\w.-]+/g, '_').slice(0, 80)
+  const base = safe || `fterm-recording-${Date.now()}`
+  const out = join(videos, base.toLowerCase().endsWith('.cast') ? base : `${base}.cast`)
+  writeFileSync(out, data.cast, 'utf8')
+  return { videoPath: out }
+})
+
+// ─── Command history ──────────────────────────────────────────────────────────
+// Command blocks already know the exit code, duration and cwd of everything
+// that ran; this is where that stops being thrown away at tab close. The
+// renderer redacts and filters before it gets here (see src/utils/commandHistory).
+
+ipcMain.on('history:append', (_e, entry: any) => {
+  if (!entry || typeof entry.command !== 'string') return
+  commandHistory.append(entry)
+})
+
+ipcMain.on('history:setEnabled', (_e, on: boolean) => commandHistory.setEnabled(!!on))
+
+ipcMain.handle('history:search', (_e, query: string, limit?: number, includeOutput?: boolean) =>
+  commandHistory.search(typeof query === 'string' ? query : '', Math.min(1000, limit ?? 200), !!includeOutput))
+
+ipcMain.handle('history:get', (_e, id: string) => commandHistory.get(String(id)))
+
+ipcMain.handle('history:stats', () => commandHistory.stats())
+
+ipcMain.handle('history:clear', () => { commandHistory.clear(); return true })
+
+ipcMain.handle('history:removeMatching', (_e, query: string) =>
+  commandHistory.removeMatching(String(query ?? '')))
+
+// ─── Update check ─────────────────────────────────────────────────────────────
+// A notice, not an updater: installing in place waits for signed builds. The
+// release list is fetched rather than `/releases/latest` so a pre-release is
+// offered too. What the list means is decided in src/utils/updateCheck.ts.
+
+ipcMain.handle('app:checkUpdate', async (): Promise<UpdateInfo | null> => {
+  try {
+    const res = await fetch('https://api.github.com/repos/TommasoFassina/FTerm/releases?per_page=20', {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'FTerm' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const list = await res.json()
+    if (!Array.isArray(list)) return null
+    const info = toUpdateInfo(app.getVersion(), list)
+    // Only a github.com release page is ever handed back as a link to open.
+    if (info && !/^https:\/\/github\.com\/TommasoFassina\/FTerm\//.test(info.url)) {
+      info.url = 'https://github.com/TommasoFassina/FTerm/releases'
+    }
+    return info
+  } catch {
+    return null
   }
 })
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useActiveTheme, useStore } from '@/store'
 import type { BrowserDownload } from '@/types/global'
+import { resolveBrowserInput, resolveSearchTemplate } from '@/utils/browserUrl'
 
 /** Minimal structural type for the Electron <webview> element methods we use. */
 interface WebviewEl extends HTMLElement {
@@ -26,7 +27,7 @@ interface WebviewEl extends HTMLElement {
 
 interface MenuItem { icon: 'image' | 'film' | 'download' | 'link' | 'external'; label: string; run: () => void }
 
-const HOME_URL = 'https://duckduckgo.com'
+const DEFAULT_HOME_URL = 'https://start.duckduckgo.com/'
 
 function formatBytes(n: number): string {
   if (!n || n < 0) return '—'
@@ -34,17 +35,6 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB'
   if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
   return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB'
-}
-
-/** Turn raw address-bar text into a navigable URL (search if it isn't one). */
-function normalizeInput(raw: string): string {
-  const s = raw.trim()
-  if (!s) return HOME_URL
-  if (/^https?:\/\//i.test(s)) return s
-  if (/^about:/i.test(s)) return s
-  // looks like a domain (has a dot, no spaces) → assume https
-  if (/^[^\s]+\.[^\s]{2,}(\/.*)?$/.test(s) && !s.includes(' ')) return 'https://' + s
-  return 'https://duckduckgo.com/?q=' + encodeURIComponent(s)
 }
 
 interface Props {
@@ -63,6 +53,10 @@ export default function BrowserView({ initialUrl, onClose, onTitleChange, onUrlC
   const browserHistory = useStore(s => s.browserHistory)
   const addHistory = useStore(s => s.addHistory)
   const clearHistory = useStore(s => s.clearHistory)
+  const HOME_URL = useStore(s => s.settings.browserHomepage) || DEFAULT_HOME_URL
+  const searchEngine = useStore(s => s.settings.browserSearchEngine)
+  const searchCustomUrl = useStore(s => s.settings.browserSearchCustomUrl)
+  const searchTemplate = resolveSearchTemplate(searchEngine, searchCustomUrl)
   const wvRef = useRef<WebviewEl | null>(null)
   // Freeze the webview's src to the first URL — later browserUrl updates (from our
   // own navigation tracking) must NOT rewrite the attribute and reload the page.
@@ -189,11 +183,11 @@ export default function BrowserView({ initialUrl, onClose, onTitleChange, onUrlC
   }, [])
 
   const navigate = useCallback((raw: string) => {
-    const url = normalizeInput(raw)
+    const url = resolveBrowserInput(raw, searchTemplate) ?? HOME_URL
     setAddress(url)
     setEditing(false)
     wvRef.current?.loadURL(url).catch(() => {})
-  }, [])
+  }, [HOME_URL, searchTemplate])
 
   const clearData = useCallback(async () => {
     const { cache, cookies, history } = clearOpts

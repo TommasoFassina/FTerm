@@ -110,6 +110,7 @@ interface FTermAPI {
   setWindowPosition: (x: number, y: number) => void
   getWindowPosition: () => Promise<[number, number]>
   isMaximized: () => Promise<boolean>
+  focusWindow: () => void
   quakeConfigure: (cfg: import('./index').QuakeSettings) => Promise<QuakeStatus>
   quakeStatus: () => Promise<QuakeStatus>
   quakeToggle: () => void
@@ -134,7 +135,9 @@ interface FTermAPI {
   fsSaveDialog: (defaultName?: string, filters?: { name: string, extensions: string[] }[]) => Promise<string | null>
   fsReadFile: (filePath: string) => Promise<string | null>
   fsReadImage: (filePath: string) => Promise<{ mime: string; base64: string; size: number }>
+  fsStat: (filePath: string) => Promise<{ mtimeMs: number; size: number; isDir: boolean } | null>
   fsWriteFile: (filePath: string, content: string) => Promise<boolean>
+  fsWriteFileBase64: (filePath: string, base64: string) => Promise<boolean>
   fsReadDir: (dirPath: string) => Promise<{ entries: Array<{ name: string; isDir: boolean; size: number }>; error?: string }>
   fsDrives: () => Promise<Array<{ path: string; label: string; size: number; freeSpace: number }>>
   dockerPs: () => Promise<any[] | null>
@@ -143,7 +146,40 @@ interface FTermAPI {
   systemProcesses: () => Promise<(string | number)[][]>
 
   // Recording
-  recordingStop: (data: { snapshots: any[]; events: any[]; theme: any; fontFamily?: string; backgroundImage?: string; backgroundBlur?: number; backgroundOpacity?: number; generateSubtitlesWith?: string }) => Promise<{ videoPath: string }>
+  recordingExport: (data: {
+    snapshots: unknown[]
+    events: unknown[]
+    widgetFrames?: string[]
+    theme: unknown
+    fontFamily?: string
+    backgroundImage?: string
+    backgroundBlur?: number
+    backgroundOpacity?: number
+    plan?: unknown
+    fps?: number
+    width?: number
+    height?: number
+    crf?: number
+    camera?: unknown
+    format?: 'mp4' | 'gif'
+    fileName?: string
+  }) => Promise<{ videoPath?: string; cancelled?: boolean }>
+  recordingCancel: () => void
+  recordingExportCast: (data: { cast: string; fileName?: string }) => Promise<{ videoPath: string }>
+
+  historyAppend: (entry: import('../utils/commandHistory').HistoryEntry) => void
+  historySetEnabled: (on: boolean) => void
+  historySearch: (query: string, limit?: number, includeOutput?: boolean) =>
+    Promise<(import('../utils/commandHistory').HistoryEntry & { runs: number })[]>
+  historyGet: (id: string) => Promise<import('../utils/commandHistory').HistoryEntry | null>
+  historyStats: () => Promise<{
+    total: number; unique: number; failed: number; medianMs: number
+    oldest: number | null; enabled: boolean; path: string
+  }>
+  historyClear: () => Promise<boolean>
+  /** Newest GitHub release vs. the running version; null when GitHub is unreachable. */
+  checkForUpdate: () => Promise<import('@/utils/updateCheck').UpdateInfo | null>
+  historyRemoveMatching: (query: string) => Promise<number>
   onRecordingProgress: (cb: (percent: number) => void) => () => void
   captureRect: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
 

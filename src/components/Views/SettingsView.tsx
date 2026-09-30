@@ -4,6 +4,7 @@ import { useStore, DEFAULT_KEYBINDINGS } from '@/store'
 import { useAI } from '@/hooks/useAI'
 import type { AIProvider, QuickAction } from '@/types'
 import { DEFAULT_QUAKE_SETTINGS } from '@/types'
+import { SEARCH_ENGINES } from '@/utils/browserUrl'
 
 type Tab = 'general' | 'ai' | 'pet' | 'stats' | 'shortcuts' | 'remote'
 
@@ -74,6 +75,20 @@ export default function SettingsView() {
 
 function GeneralTab() {
   const { settings, setSettings } = useStore()
+  const dirCount = useStore(s => Object.keys(s.dirVisits).length)
+  const clearDirVisits = useStore(s => s.clearDirVisits)
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null)
+
+  async function checkNow() {
+    setUpdateMsg('Checking…')
+    const info = await window.fterm.checkForUpdate().catch(() => null)
+    setSettings({ lastUpdateCheck: Date.now() })
+    if (!info) { setUpdateMsg('Could not reach GitHub.'); return }
+    if (!info.newer) { setUpdateMsg(`You are on the latest version (${info.current}).`); return }
+    setUpdateMsg(null)
+    useStore.getState().setAvailableUpdate(info)
+    setSettings({ dismissedUpdateVersion: undefined })
+  }
 
   function exportSettings() {
     const data = JSON.stringify(settings, null, 2)
@@ -222,6 +237,81 @@ function GeneralTab() {
         </Row>
       </Section>
 
+      <Section title="Command history">
+        <Row label="Remember commands across sessions">
+          <Toggle
+            value={settings.commandHistoryEnabled !== false}
+            onChange={v => { setSettings({ commandHistoryEnabled: v }); window.fterm.historySetEnabled(v) }}
+          />
+        </Row>
+        <Row label="Also keep each command's output">
+          <Toggle
+            value={settings.commandHistoryOutput === true}
+            onChange={v => setSettings({ commandHistoryOutput: v })}
+          />
+        </Row>
+        <p className="text-[10px] text-white/30 mt-1 leading-relaxed">
+          Every finished command is written to <code>command-history.jsonl</code> in your FTerm data
+          folder with its exit code, duration and directory — <kbd>Ctrl+Shift+H</kbd> searches it.
+          Values that look like passwords, tokens or keys are stripped before anything is written,
+          and a command typed with a leading space is never recorded at all. Output is off by
+          default because it is the part most likely to contain something you did not mean to keep.
+        </p>
+        <div className="flex gap-2 mt-2">
+          <button
+            onClick={() => window.fterm.historyStats().then(st => alert(
+              `${st.total.toLocaleString()} commands · ${st.unique.toLocaleString()} distinct · ` +
+              `${st.failed.toLocaleString()} failed
+
+${st.path}`))}
+            className="px-2.5 py-1 text-[11px] rounded-md border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            Show stats
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm('Delete the whole command history? This cannot be undone.')) return
+              window.fterm.historyClear()
+            }}
+            className="px-2.5 py-1 text-[11px] rounded-md border border-[#f85149]/30 text-[#ff8880] hover:bg-[#f85149]/15 transition-colors"
+          >
+            Delete history
+          </button>
+        </div>
+        <Row label={`Frequent directories (${dirCount} remembered)`}>
+          <button
+            onClick={() => { if (confirm('Forget every remembered directory?')) clearDirVisits() }}
+            disabled={dirCount === 0}
+            className="px-2.5 py-1 text-[11px] rounded-md border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors disabled:opacity-40"
+          >
+            Forget
+          </button>
+        </Row>
+        <p className="text-[10px] text-white/30 mt-1 leading-relaxed">
+          Directories you <code>cd</code> into are ranked by how often and how recently you use them.
+          Type <kbd>z</kbd> and a few letters in the command palette to jump to one.
+        </p>
+      </Section>
+
+      <Section title="Updates">
+        <Row label="Check for new versions at startup">
+          <Toggle value={settings.checkForUpdates !== false} onChange={v => setSettings({ checkForUpdates: v })} />
+        </Row>
+        <div className="flex items-center gap-3 mt-2">
+          <button
+            onClick={checkNow}
+            className="px-2.5 py-1 text-[11px] rounded-md border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            Check now
+          </button>
+          {updateMsg && <span className="text-[11px] text-white/40">{updateMsg}</span>}
+        </div>
+        <p className="text-[10px] text-white/30 mt-1 leading-relaxed">
+          Once a day FTerm asks GitHub for its release list — nothing else is sent. A newer version
+          shows a notice with a link to the download; nothing is installed automatically.
+        </p>
+      </Section>
+
       <Section title="File Explorer">
         <Row label="Open text files in editor">
           <Toggle value={settings.explorerOpenInTerminal !== false} onChange={v => setSettings({ explorerOpenInTerminal: v })} />
@@ -252,7 +342,7 @@ function GeneralTab() {
         </Row>
       </Section>
 
-      <BrowserAdblockSection />
+      <BrowserSection />
 
       <Section title="Backup">
         <p className="text-xs text-[#6e7681] mb-3">Export or import all visual settings as JSON.</p>
@@ -265,8 +355,8 @@ function GeneralTab() {
   )
 }
 
-// In-app browser ad blocker (uBlock Origin Lite) version + auto-update controls.
-function BrowserAdblockSection() {
+// In-app browser: homepage, search engine, and ad blocker (uBlock Origin Lite) controls.
+function BrowserSection() {
   const { settings, setSettings } = useStore()
   const autoUpdate = settings.browserUbolAutoUpdate !== false
   const [version, setVersion] = useState('')
@@ -293,8 +383,39 @@ function BrowserAdblockSection() {
     setTimeout(() => setStatus('idle'), 4000)
   }
 
+  const searchEngine = settings.browserSearchEngine ?? 'duckduckgo'
+
   return (
-    <Section title="Browser ad blocker">
+    <Section title="Browser">
+      <Row label="Homepage">
+        <input
+          value={settings.browserHomepage ?? 'https://start.duckduckgo.com/'}
+          onChange={e => setSettings({ browserHomepage: e.target.value })}
+          placeholder="https://start.duckduckgo.com/"
+          className="input flex-1 min-w-0"
+        />
+      </Row>
+      <Row label="Search engine">
+        <select
+          value={searchEngine}
+          onChange={e => setSettings({ browserSearchEngine: e.target.value })}
+          className="input"
+        >
+          {SEARCH_ENGINES.map(engine => (
+            <option key={engine.id} value={engine.id}>{engine.name}</option>
+          ))}
+        </select>
+      </Row>
+      {searchEngine === 'custom' && (
+        <Row label="Custom search URL">
+          <input
+            value={settings.browserSearchCustomUrl ?? ''}
+            onChange={e => setSettings({ browserSearchCustomUrl: e.target.value })}
+            placeholder="https://example.com/search?q=%s"
+            className="input flex-1 min-w-0"
+          />
+        </Row>
+      )}
       <p className="text-xs text-[#6e7681] mb-3">
         uBlock Origin Lite {version ? `v${version}` : ''} powers ad/tracker blocking in the in-app browser.
       </p>

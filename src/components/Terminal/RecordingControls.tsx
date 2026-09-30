@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useStore, useActiveTheme } from '@/store'
-import { TerminalRecorder } from '@/services/TerminalRecorder'
+import { useStore } from '@/store'
+import { TerminalRecorder, RECORDER_LIMITS } from '@/services/TerminalRecorder'
+import { Circle, Pause, Play, Square } from 'lucide-react'
 import type { Terminal } from '@xterm/xterm'
 
 interface Props {
@@ -9,172 +10,126 @@ interface Props {
   paneId?: string
   widgetEl?: HTMLElement | null
   containerEl?: HTMLElement | null
+  /** The pane's profile theme, carried on the take so the studio paints with it. */
+  themeId?: string
 }
 
-type RecordingState = 'idle' | 'recording' | 'processing'
-
-export default function RecordingControls({ terminal, widgetEl, containerEl }: Props) {
-  const [state, setState] = useState<RecordingState>('idle')
+/**
+ * Start / pause / stop only. Stopping no longer kicks off an encode: the take
+ * goes to the studio, where it can be trimmed, cut and sized before anything is
+ * written to disk. A recording you cannot review before publishing is a
+ * recording you end up doing twice.
+ */
+export default function RecordingControls({ terminal, widgetEl, containerEl, themeId }: Props) {
+  const [recording, setRecording] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [elapsed, setElapsed] = useState(0)
-  const [progress, setProgress] = useState(0)
-  const [videoPath, setVideoPath] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const recorderRef = useRef<TerminalRecorder | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const theme = useActiveTheme()
-  const { settings } = useStore()
+  const setStudioTake = useStore(s => s.setStudioTake)
+  const setActiveView = useStore(s => s.setActiveView)
 
   useEffect(() => {
-    if (recorderRef.current && state === 'recording') {
+    if (recorderRef.current && recording) {
       recorderRef.current.setWidgetElement(widgetEl ?? null, containerEl ?? null)
     }
-  }, [widgetEl, containerEl, state])
+  }, [widgetEl, containerEl, recording])
 
-  const startRecording = useCallback(() => {
+  const finish = useCallback(() => {
+    const rec = recorderRef.current
+    if (!rec) return
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+
+    const take = { ...rec.stop(), themeId }
+    recorderRef.current = null
+    setRecording(false)
+    setPaused(false)
+
+    if (take.snapshots.length === 0) {
+      setNotice('Nothing was captured')
+      setTimeout(() => setNotice(null), 3000)
+      return
+    }
+    setStudioTake(take)
+    setActiveView('studio')
+  }, [setStudioTake, setActiveView, themeId])
+
+  const start = useCallback(() => {
     if (!terminal) return
-    setError(null)
-    setVideoPath(null)
+    setNotice(null)
     setElapsed(0)
 
     const recorder = new TerminalRecorder(terminal, widgetEl, containerEl)
+    recorder.onAutoStop = () => {
+      setNotice(`Stopped at the ${Math.round(RECORDER_LIMITS.MAX_DURATION_MS / 60000)} minute limit`)
+      finish()
+    }
     recorder.start()
     recorderRef.current = recorder
-    setState('recording')
+    setRecording(true)
+    setPaused(false)
 
-    const startTime = Date.now()
     intervalRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000))
-    }, 1000)
-  }, [terminal])
+      const rec = recorderRef.current
+      if (rec) setElapsed(Math.floor(rec.now() / 1000))
+    }, 500)
+  }, [terminal, widgetEl, containerEl, finish])
 
-  const stopRecording = useCallback(async () => {
-    if (!recorderRef.current) return
-
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-
-    const { snapshots, events } = recorderRef.current.stop()
-    recorderRef.current = null
-    setState('processing')
-    setProgress(0)
-
-    const removeProgress = window.fterm.onRecordingProgress((p) => {
-      setProgress(Math.round(p))
-    })
-
-    try {
-      const themeData = {
-        background: theme.background,
-        foreground: theme.foreground,
-        cursor: theme.cursor,
-        red: theme.red,
-        green: theme.green,
-        yellow: theme.yellow,
-        blue: theme.blue,
-        cyan: theme.cyan,
-        magenta: theme.magenta,
-        white: theme.white,
-        brightBlack: theme.brightBlack,
-        brightRed: theme.brightRed,
-        brightGreen: theme.brightGreen,
-        brightYellow: theme.brightYellow,
-        brightBlue: theme.brightBlue,
-        brightCyan: theme.brightCyan,
-        brightWhite: theme.brightWhite,
-      }
-
-      const result = await window.fterm.recordingStop({
-        snapshots,
-        events,
-        theme: themeData,
-        fontFamily: settings.fontFamily,
-        backgroundImage: settings.backgroundImage || undefined,
-        backgroundBlur: settings.backgroundBlur ?? 10,
-        backgroundOpacity: settings.opacity ?? 0.85,
-      })
-      setVideoPath(result.videoPath)
-    } catch (err: any) {
-      setError(err?.message ?? 'Recording failed')
-    } finally {
-      removeProgress()
-      setState('idle')
-    }
-  }, [theme, settings])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      if (recorderRef.current?.getIsRecording()) recorderRef.current.stop()
-    }
+  const togglePause = useCallback(() => {
+    const rec = recorderRef.current
+    if (!rec) return
+    if (rec.isPaused()) { rec.resume(); setPaused(false) } else { rec.pause(); setPaused(true) }
   }, [])
 
-  const formatElapsed = (s: number) => {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${m}:${String(sec).padStart(2, '0')}`
+  useEffect(() => () => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    if (recorderRef.current?.getIsRecording()) recorderRef.current.stop()
+  }, [])
+
+  const formatElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+
+  if (!recording) {
+    return (
+      <div className="flex items-center gap-2">
+        <button
+          onClick={start}
+          disabled={!terminal}
+          title="Start recording this pane"
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-transparent hover:bg-white/10 text-[#c9d1d9] border border-white/10 transition-colors disabled:opacity-40"
+        >
+          <Circle size={8} fill="#f85149" strokeWidth={0} />
+          REC
+        </button>
+        {notice && <span className="text-xs text-[#8b949e]">{notice}</span>}
+      </div>
+    )
   }
 
   return (
-    <div className="flex items-center gap-2">
-      {state === 'idle' && !videoPath && (
-        <button
-          onClick={startRecording}
-          disabled={!terminal}
-          title="Start recording"
-          className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-transparent hover:bg-white/10 text-[#c9d1d9] border border-white/10 transition-colors disabled:opacity-40"
-        >
-          <span className="w-2 h-2 rounded-full bg-red-500" />
-          REC
-        </button>
-      )}
-
-      {state === 'recording' && (
-        <button
-          onClick={stopRecording}
-          title="Stop recording"
-          className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 transition-colors animate-pulse"
-        >
-          <span className="w-2 h-2 rounded bg-red-500" />
-          {formatElapsed(elapsed)}
-        </button>
-      )}
-
-      {state === 'processing' && (
-        <div className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-[#8b949e] border border-white/10">
-          <span className="w-2 h-2 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-          {progress > 0 ? `${progress}%` : 'Rendering…'}
-        </div>
-      )}
-
-      {videoPath && state === 'idle' && (
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-green-400">✓ Saved</span>
-          <button
-            onClick={() => window.fterm.openPath(videoPath)}
-            title={videoPath}
-            className="text-xs text-[#58a6ff] hover:underline"
-          >
-            Open
-          </button>
-          <button
-            onClick={() => setVideoPath(null)}
-            className="text-xs text-[#8b949e] hover:text-white ml-1"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-red-400" title={error}>⚠ Failed</span>
-          <button onClick={() => setError(null)} className="text-xs text-[#8b949e] hover:text-white">×</button>
-        </div>
-      )}
+    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-red-500/30 bg-red-500/10">
+      <span
+        className={`w-2 h-2 rounded-full bg-red-500 ${paused ? 'opacity-40' : 'animate-pulse'}`}
+        aria-hidden
+      />
+      <span className="text-xs font-medium text-red-300 tabular-nums w-[38px] text-center">
+        {formatElapsed(elapsed)}
+      </span>
+      <button
+        onClick={togglePause}
+        title={paused ? 'Resume' : 'Pause — the timeline stops with it'}
+        className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+      >
+        {paused ? <Play size={11} fill="currentColor" /> : <Pause size={11} fill="currentColor" />}
+      </button>
+      <button
+        onClick={finish}
+        title="Stop and open the studio"
+        className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+      >
+        <Square size={11} fill="currentColor" />
+      </button>
     </div>
   )
 }

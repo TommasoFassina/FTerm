@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'motion/react'
-import { X, CornerDownRight, Copy, Check, Clock, ArrowRight } from 'lucide-react'
+import { X, CornerDownRight, Copy, Check, Clock, ArrowRight, Image as ImageIcon } from 'lucide-react'
+import { useActiveTheme, useStore } from '@/store'
+import { blockImageName, renderBlockImage } from '@/services/recording/blockImage'
+import type { Ctx2D, FramePalette } from '@/services/recording/paintFrame'
 import { getTracker, type CommandBlock } from '@/services/CommandBlocks'
 import { formatDuration, summarizeCommand } from '@/utils/shellIntegration'
 
@@ -20,6 +23,8 @@ export default function CommandBlocksPanel({
   const [blocks, setBlocks] = useState<CommandBlock[]>([])
   const [copied, setCopied] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ id: string; text: string } | null>(null)
+  const theme = useActiveTheme()
+  const fontFamily = useStore(s => s.settings.fontFamily)
 
   // The tracker is the source of truth; mirror it into state on every change.
   useEffect(() => {
@@ -44,6 +49,51 @@ export default function CommandBlocksPanel({
       setTimeout(() => setCopied(c => (c === key ? null : c)), 1200)
     }).catch(() => { })
   }, [])
+
+  /**
+   * Renders the block as a PNG and puts it on the clipboard — the thing people
+   * actually paste into an issue. Shift-click saves it to a file instead, for
+   * when it has to be attached rather than pasted.
+   */
+  const asImage = useCallback(async (block: CommandBlock, save: boolean) => {
+    const palette = theme as unknown as FramePalette
+    const canvas = renderBlockImage(
+      {
+        command: block.command,
+        output: getTracker(instanceId)?.getOutput(block.id) ?? '',
+        exitCode: block.exitCode,
+        durationMs: block.durationMs,
+        cwd: block.cwd,
+      },
+      { theme: palette, fontFamily: fontFamily || 'Cascadia Mono, Consolas, monospace' },
+      (w, h) => {
+        const c = document.createElement('canvas')
+        c.width = w; c.height = h
+        return { canvas: c, ctx: c.getContext('2d') as unknown as Ctx2D }
+      },
+    )
+
+    const blob: Blob | null = await new Promise(res => canvas.toBlob(res, 'image/png'))
+    if (!blob) return
+
+    if (save) {
+      const path = await window.fterm.fsSaveDialog(
+        blockImageName(block.command), [{ name: 'PNG image', extensions: ['png'] }])
+      if (!path) return
+      // fsWriteFile takes text, so the bytes travel as base64 in a data URL
+      const dataUrl = canvas.toDataURL('image/png')
+      await window.fterm.fsWriteFileBase64(path, dataUrl.split(',')[1])
+      setCopied(`img-${block.id}`)
+      setTimeout(() => setCopied(c => (c === `img-${block.id}` ? null : c)), 1200)
+      return
+    }
+
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      setCopied(`img-${block.id}`)
+      setTimeout(() => setCopied(c => (c === `img-${block.id}` ? null : c)), 1200)
+    } catch { /* clipboard refused the image — nothing useful to say */ }
+  }, [instanceId, theme, fontFamily])
 
   const reveal = (id: string) => {
     getTracker(instanceId)?.revealBlock(id)
@@ -139,6 +189,13 @@ export default function CommandBlocksPanel({
                     >
                       <Copy size={12} />
                     </IconButton>
+                    <IconButton
+                      title="Copy as image — hold Shift to save a file"
+                      active={copied === `img-${b.id}`}
+                      onClick={(ev) => asImage(b, ev.shiftKey)}
+                    >
+                      <ImageIcon size={12} />
+                    </IconButton>
                     <IconButton title="Preview output" onClick={() => togglePreview(b.id)}>
                       <ArrowRight size={12} className={preview?.id === b.id ? 'rotate-90 transition-transform' : 'transition-transform'} />
                     </IconButton>
@@ -168,7 +225,7 @@ function IconButton({
   title, onClick, active, children,
 }: {
   title: string
-  onClick: () => void
+  onClick: (ev: React.MouseEvent) => void
   active?: boolean
   children: React.ReactNode
 }) {
